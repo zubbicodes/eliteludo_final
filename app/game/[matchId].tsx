@@ -1,5 +1,9 @@
-// Solo-vs-AI game screen. Phase 1 wires together the rules engine, AI bot,
-// Skia board, dice, and tokens. Multiplayer arrives in Phase 3.
+// Solo-vs-AI game screen for the dice-pool turn machine.
+// Layout: header → top profiles → board → bottom profiles → dice tray.
+//
+// Turn flow handled by 5 independent effects (see comments below). Each effect
+// schedules at most one timer and cleans it up on state change, avoiding the
+// timer-clobber bug from chaining setTimeout + setState in a single effect.
 
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
@@ -12,12 +16,14 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { DiceTray } from '@/src/components/DiceTray';
+import { PlayerProfile } from '@/src/components/PlayerProfile';
+import { TokenDicePicker } from '@/src/components/TokenDicePicker';
 import { BOARD_SIZE, cellForToken } from '@/src/game/board';
-import type { Color, MoveOption } from '@/src/game/types';
-import { chooseMove, useGameStore } from '@/src/stores/game';
+import type { Color, Player, TokenId } from '@/src/game/types';
 import { BoardCanvas } from '@/src/skia/Board';
-import { Dice } from '@/src/skia/Dice';
 import { Token as TokenView } from '@/src/skia/Token';
+import { chooseMove, useGameStore } from '@/src/stores/game';
 import { colors } from '@/src/theme/colors';
 import { spacing, typography } from '@/src/theme/typography';
 
@@ -28,7 +34,7 @@ const PLAYER_HEX: Record<Color, string> = {
   blue: colors.blue,
 };
 
-const TURN_THINK_MS = 700;
+const THINK_MS = 700;
 const ROLL_ANIM_MS = 600;
 const MOVE_ANIM_MS = 400;
 
@@ -38,140 +44,140 @@ export default function GameScreen() {
 
   const state = useGameStore((s) => s.state);
   const validMoves = useGameStore((s) => s.validMoves);
-  const isRolling = useGameStore((s) => s.isRolling);
   const newGame = useGameStore((s) => s.newGame);
-  const beginRollAnim = useGameStore((s) => s.beginRollAnim);
-  const roll = useGameStore((s) => s.roll);
+  const beginRoll = useGameStore((s) => s.beginRoll);
+  const finishRoll = useGameStore((s) => s.finishRoll);
   const selectMove = useGameStore((s) => s.selectMove);
-  const finishTurn = useGameStore((s) => s.finishTurn);
+  const finishMoveAnim = useGameStore((s) => s.finishMoveAnim);
 
-  const [hint, setHint] = useState<string>('');
+  const [pickerForToken, setPickerForToken] = useState<TokenId | null>(null);
 
   // Layout
-  const boardSize = Math.min(width - spacing.md * 2, 420);
+  const boardSize = Math.min(width - spacing.md * 2, 380);
   const cellPx = boardSize / BOARD_SIZE;
   const tokenSize = cellPx * 0.78;
 
-  // Init game on mount.
+  // Init game on mount
   useEffect(() => {
     newGame('red', 3);
   }, [matchId, newGame]);
 
-  const currentPlayer = state.players[state.currentPlayerIdx];
-  const isMyTurn = currentPlayer && !currentPlayer.isAI;
+  const currentPlayer: Player | undefined = state.players[state.currentPlayerIdx];
+  const isMyTurn = !!currentPlayer && !currentPlayer.isAI;
 
-  // ── Effect 1: AI is on idle and needs to start a roll. ──
+  // ── Effect: dice tumble has played out — settle the value. ──
   useEffect(() => {
-    if (!currentPlayer || state.winnerColor || isRolling) return;
-    if (state.status !== 'idle' || state.dice !== null) return;
-    if (!currentPlayer.isAI) {
-      setHint('Tap the dice to roll.');
-      return;
-    }
-    const t = setTimeout(() => beginRollAnim(), TURN_THINK_MS);
+    if (state.status !== 'rolling') return;
+    const t = setTimeout(() => finishRoll(), ROLL_ANIM_MS);
     return () => clearTimeout(t);
-  }, [
-    currentPlayer,
-    state.winnerColor,
-    state.status,
-    state.dice,
-    isRolling,
-    beginRollAnim,
-  ]);
+  }, [state.status, finishRoll]);
 
-  // ── Effect 2: dice is tumbling — settle it after the anim. ──
+  // ── Effect: AI is awaiting_roll — schedule a roll. ──
   useEffect(() => {
-    if (!isRolling) return;
-    const t = setTimeout(() => roll(), ROLL_ANIM_MS);
+    if (state.status !== 'awaiting_roll' || !currentPlayer?.isAI) return;
+    if (state.winnerColor) return;
+    const t = setTimeout(() => beginRoll(), THINK_MS);
     return () => clearTimeout(t);
-  }, [isRolling, roll]);
+  }, [state.status, currentPlayer, state.winnerColor, beginRoll]);
 
-  // ── Effect 3: dice has settled — auto-skip, AI auto-pick, or wait for human. ──
+  // ── Effect: AI is awaiting_move — schedule a pick. ──
   useEffect(() => {
-    if (!currentPlayer || state.winnerColor || isRolling) return;
-    if (state.dice === null) return;
-    if (state.status === 'animating' || state.status === 'finished') return;
+    if (state.status !== 'awaiting_move' || !currentPlayer?.isAI) return;
+    if (state.winnerColor) return;
+    const t = setTimeout(() => {
+      const pick = chooseMove(state, currentPlayer.color);
+      if (pick) selectMove(pick);
+    }, THINK_MS);
+    return () => clearTimeout(t);
+  }, [state, currentPlayer, selectMove]);
 
-    if (validMoves.length === 0) {
-      setHint(currentPlayer.isAI ? `${currentPlayer.name} skips.` : 'No legal moves — skipping.');
-      const rolled = state.dice;
-      const t = setTimeout(() => finishTurn(rolled, false), TURN_THINK_MS);
-      return () => clearTimeout(t);
-    }
-
-    if (state.status !== 'awaiting_move') return;
-
-    if (currentPlayer.isAI) {
-      const rolled = state.dice;
-      const aiState = state;
-      const t = setTimeout(() => {
-        const pick = chooseMove(aiState, currentPlayer.color, rolled);
-        if (!pick) {
-          finishTurn(rolled, false);
-          return;
-        }
-        const captured = pick.captures.length > 0;
-        selectMove(pick, {
-          afterApply: () => {
-            setTimeout(() => finishTurn(rolled, captured), MOVE_ANIM_MS);
-          },
-        });
-      }, TURN_THINK_MS);
-      return () => clearTimeout(t);
-    }
-
-    setHint('Tap one of your highlighted tokens.');
-  }, [
-    state,
-    validMoves,
-    isRolling,
-    currentPlayer,
-    selectMove,
-    finishTurn,
-  ]);
-
-  // Watch for winner → result screen
+  // ── Effect: token movement anim has played — settle into next status. ──
   useEffect(() => {
-    if (state.winnerColor) {
-      const t = setTimeout(() => {
-        router.replace({
-          pathname: '/game/result',
-          params: { winner: state.winnerColor as string },
-        });
-      }, 900);
-      return () => clearTimeout(t);
-    }
+    if (state.status !== 'animating') return;
+    const t = setTimeout(() => finishMoveAnim(), MOVE_ANIM_MS);
+    return () => clearTimeout(t);
+  }, [state.status, finishMoveAnim]);
+
+  // ── Effect: winner → navigate to result. ──
+  useEffect(() => {
+    if (!state.winnerColor) return;
+    const t = setTimeout(() => {
+      router.replace({
+        pathname: '/game/result',
+        params: { winner: state.winnerColor as string },
+      });
+    }, 900);
+    return () => clearTimeout(t);
   }, [state.winnerColor]);
 
-  function doSelectMove(move: MoveOption) {
-    const rolled = state.dice;
-    if (rolled === null) return;
-    const captured = move.captures.length > 0;
-    selectMove(move, {
-      afterApply: () => {
-        setTimeout(() => finishTurn(rolled, captured), MOVE_ANIM_MS);
-      },
-    });
+  // ── Effect: clear picker when context changes. ──
+  useEffect(() => {
+    setPickerForToken(null);
+  }, [state.currentPlayerIdx, state.dicePool.length, state.status]);
+
+  // ── handlers ──
+  function onHumanRoll() {
+    if (!isMyTurn || state.status !== 'awaiting_roll') return;
+    beginRoll();
   }
 
-  function onHumanRollPress() {
-    if (!isMyTurn || state.dice !== null || isRolling) return;
-    beginRollAnim();
-    setTimeout(() => roll(), ROLL_ANIM_MS);
+  function onTokenTap(tokenId: TokenId) {
+    if (!isMyTurn || state.status !== 'awaiting_move') return;
+    if (pickerForToken === tokenId) {
+      setPickerForToken(null);
+      return;
+    }
+    const opts = validMoves.filter((m) => m.tokenId === tokenId);
+    if (opts.length === 0) return;
+    const uniqueValues = Array.from(new Set(opts.map((o) => o.dieValue)));
+    if (uniqueValues.length === 1) {
+      setPickerForToken(null);
+      selectMove(opts[0]);
+      return;
+    }
+    setPickerForToken(tokenId);
   }
 
-  function onTokenPress(tokenId: string) {
-    const move = validMoves.find((m) => m.tokenId === tokenId);
-    if (!move) return;
-    if (!isMyTurn) return;
-    doSelectMove(move);
+  function onPickerSelect(value: number) {
+    if (!pickerForToken) return;
+    const move = validMoves.find(
+      (m) => m.tokenId === pickerForToken && m.dieValue === value,
+    );
+    setPickerForToken(null);
+    if (move) selectMove(move);
   }
 
-  // Flatten token list for rendering.
+  // ── derived ──
   const allTokens = useMemo(
     () => state.players.flatMap((p) => p.tokens),
     [state.players],
   );
+
+  const movableTokenIds = useMemo(
+    () => new Set(validMoves.map((m) => m.tokenId)),
+    [validMoves],
+  );
+
+  const pickerValues = pickerForToken
+    ? Array.from(
+        new Set(
+          validMoves.filter((m) => m.tokenId === pickerForToken).map((m) => m.dieValue),
+        ),
+      ).sort((a, b) => b - a)
+    : [];
+
+  const pickerCenter = (() => {
+    if (!pickerForToken) return null;
+    const tok = allTokens.find((t) => t.id === pickerForToken);
+    if (!tok) return null;
+    const cell = cellForToken(tok);
+    return { cx: (cell.col + 0.5) * cellPx, cy: (cell.row + 0.5) * cellPx };
+  })();
+
+  const byColor = new Map<Color, Player>(state.players.map((p) => [p.color, p]));
+
+  const rollLabel = state.dicePool.length > 0 ? 'ROLL AGAIN' : 'ROLL';
+  const hint = makeHint(state, isMyTurn, currentPlayer);
 
   if (!currentPlayer) return null;
 
@@ -186,11 +192,18 @@ export default function GameScreen() {
             style={[styles.dot, { backgroundColor: PLAYER_HEX[currentPlayer.color] }]}
           />
           <Text style={styles.turnText}>
-            {currentPlayer.isAI ? `${currentPlayer.name}'s turn` : 'Your turn'}
+            {isMyTurn ? 'Your turn' : `${currentPlayer.name}'s turn`}
           </Text>
         </View>
         <Text style={styles.matchId}>#{matchId ?? 'local'}</Text>
       </View>
+
+      <ProfileRow
+        left={byColor.get('red')}
+        right={byColor.get('green')}
+        currentColor={currentPlayer.color}
+        lastRollByColor={state.lastRollByColor}
+      />
 
       <View style={styles.boardWrap}>
         <View style={[styles.boardSquare, { width: boardSize, height: boardSize }]}>
@@ -200,7 +213,7 @@ export default function GameScreen() {
               const cell = cellForToken(t);
               const cx = (cell.col + 0.5) * cellPx;
               const cy = (cell.row + 0.5) * cellPx;
-              const movable = isMyTurn && validMoves.some((m) => m.tokenId === t.id);
+              const movable = isMyTurn && state.status === 'awaiting_move' && movableTokenIds.has(t.id);
               return (
                 <TokenView
                   key={t.id}
@@ -210,32 +223,104 @@ export default function GameScreen() {
                   size={tokenSize}
                   selectable={movable}
                   highlighted={movable}
-                  onPress={() => onTokenPress(t.id)}
+                  onPress={() => onTokenTap(t.id)}
                 />
               );
             })}
+            {pickerForToken && pickerCenter && pickerValues.length > 0 && (
+              <TokenDicePicker
+                cx={pickerCenter.cx}
+                cy={pickerCenter.cy}
+                offset={tokenSize / 2}
+                values={pickerValues}
+                onPick={onPickerSelect}
+              />
+            )}
           </View>
         </View>
       </View>
 
-      <View style={styles.footer}>
-        <Text style={styles.hint}>{hint}</Text>
-        <Pressable
-          onPress={onHumanRollPress}
-          disabled={!isMyTurn || state.dice !== null || isRolling}
-          style={({ pressed }) => [
-            styles.diceWrap,
-            pressed && isMyTurn && state.dice === null && { transform: [{ scale: 0.96 }] },
-          ]}
-        >
-          <Dice size={72} value={state.dice} rolling={isRolling} />
-        </Pressable>
-        <Text style={styles.streak}>
-          {state.sixStreak > 0 ? `Sixes in a row: ${state.sixStreak}` : ' '}
-        </Text>
-      </View>
+      <ProfileRow
+        left={byColor.get('blue')}
+        right={byColor.get('yellow')}
+        currentColor={currentPlayer.color}
+        lastRollByColor={state.lastRollByColor}
+      />
+
+      <DiceTray
+        pool={state.dicePool}
+        isRolling={state.status === 'rolling'}
+        canRoll={isMyTurn && state.status === 'awaiting_roll' && !state.winnerColor}
+        rollLabel={rollLabel}
+        onRoll={onHumanRoll}
+        hint={hint}
+      />
     </SafeAreaView>
   );
+}
+
+function ProfileRow({
+  left,
+  right,
+  currentColor,
+  lastRollByColor,
+}: {
+  left?: Player;
+  right?: Player;
+  currentColor: Color;
+  lastRollByColor: Partial<Record<Color, number>>;
+}) {
+  return (
+    <View style={styles.row}>
+      {left ? (
+        <PlayerProfile
+          player={left}
+          isActive={currentColor === left.color}
+          lastRoll={lastRollByColor[left.color] ?? null}
+          align="left"
+        />
+      ) : (
+        <View style={styles.rowSpacer} />
+      )}
+      {right ? (
+        <PlayerProfile
+          player={right}
+          isActive={currentColor === right.color}
+          lastRoll={lastRollByColor[right.color] ?? null}
+          align="right"
+        />
+      ) : (
+        <View style={styles.rowSpacer} />
+      )}
+    </View>
+  );
+}
+
+function makeHint(
+  state: ReturnType<typeof useGameStore.getState>['state'],
+  isMyTurn: boolean,
+  currentPlayer: Player | undefined,
+): string {
+  if (state.winnerColor) return '';
+  if (!currentPlayer) return '';
+  if (!isMyTurn) {
+    if (state.status === 'awaiting_roll') return `${currentPlayer.name} is about to roll…`;
+    if (state.status === 'rolling') return `${currentPlayer.name} is rolling…`;
+    if (state.status === 'awaiting_move') return `${currentPlayer.name} is choosing a move…`;
+    return ' ';
+  }
+  if (state.status === 'awaiting_roll') {
+    return state.dicePool.length > 0
+      ? 'Rolled a six — roll again!'
+      : 'Tap ROLL to start your turn.';
+  }
+  if (state.status === 'rolling') return 'Rolling…';
+  if (state.status === 'awaiting_move') {
+    return state.dicePool.length > 1
+      ? 'Tap a token, then pick which die to use.'
+      : 'Tap a highlighted token to move.';
+  }
+  return ' ';
 }
 
 const styles = StyleSheet.create({
@@ -263,20 +348,17 @@ const styles = StyleSheet.create({
   dot: { width: 10, height: 10, borderRadius: 5 },
   turnText: { ...typography.caption, color: colors.text },
   matchId: { ...typography.caption, color: colors.textDim },
+  row: {
+    flexDirection: 'row',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    gap: spacing.sm,
+  },
+  rowSpacer: { flex: 1 },
   boardWrap: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
   boardSquare: { position: 'relative' },
-  footer: {
-    alignItems: 'center',
-    paddingBottom: spacing.lg,
-    gap: spacing.sm,
-  },
-  hint: { ...typography.caption, color: colors.textMuted, height: 18 },
-  diceWrap: {
-    padding: spacing.sm,
-  },
-  streak: { ...typography.caption, color: colors.gold, height: 18 },
 });

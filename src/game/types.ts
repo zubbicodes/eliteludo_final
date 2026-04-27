@@ -1,16 +1,8 @@
 // Pure types — no React Native, no Skia, no Supabase imports.
-// This module is the contract between the rules engine, the AI, and the UI.
 
 export const COLORS = ['red', 'green', 'yellow', 'blue'] as const;
 export type Color = (typeof COLORS)[number];
 
-/**
- * A token's location is a discriminated union over the four conceptual zones:
- *  - 'home'      → still in the player's home base (waiting to be released by a 6)
- *  - 'track'     → somewhere on the 52-cell outer track (index 0..51, absolute)
- *  - 'home_col'  → on the player's 5-cell home column (index 0..4, with 4 nearest to finish)
- *  - 'finished'  → reached the center; out of play
- */
 export type TokenLocation =
   | { kind: 'home'; slot: 0 | 1 | 2 | 3 }
   | { kind: 'track'; index: number }
@@ -28,32 +20,42 @@ export type Token = {
 export type Player = {
   color: Color;
   isAI: boolean;
-  /** Display name (for UI / result screen). */
   name: string;
+  avatarId: number;
   tokens: [Token, Token, Token, Token];
 };
 
-export type GameStatus = 'idle' | 'rolling' | 'awaiting_move' | 'animating' | 'finished';
+/**
+ * Logical turn machine:
+ *   awaiting_roll → (player presses ROLL) → rolling
+ *   rolling       → (anim settles) → awaiting_roll (rolled 6) | awaiting_move | next-turn
+ *   awaiting_move → (player picks token+die) → animating
+ *   animating     → (token anim settles) → awaiting_move (more dice) | next-turn | finished
+ */
+export type GameStatus =
+  | 'awaiting_roll'
+  | 'rolling'
+  | 'awaiting_move'
+  | 'animating'
+  | 'finished';
 
 export type GameState = {
   players: Player[];
-  /** Index into `players` of whose turn it is. */
   currentPlayerIdx: number;
-  /** Last dice value rolled in the active turn, or null if not yet rolled. */
-  dice: number | null;
-  /** Number of consecutive sixes the active player has rolled this turn (max 2 — 3 forfeits). */
-  sixStreak: number;
+  /** Unplayed dice values for the current turn, in roll order. */
+  dicePool: number[];
+  /** Consecutive sixes rolled THIS turn. Reset when player changes or rolling phase ends. */
+  consecutiveSixes: number;
   status: GameStatus;
   winnerColor: Color | null;
+  /** Most-recently rolled die per color. Persists across turns so profiles can show "last roll". */
+  lastRollByColor: Partial<Record<Color, number>>;
 };
 
-/**
- * Result of evaluating a single candidate move (token + dice value).
- * `to` is the location the token would land on if the move is applied.
- * `captures` lists token IDs that would be sent home (length 0 or 1 in classic ludo).
- */
 export type MoveOption = {
   tokenId: TokenId;
+  /** Which die from the pool would be consumed by this move. */
+  dieValue: number;
   from: TokenLocation;
   to: TokenLocation;
   captures: TokenId[];
