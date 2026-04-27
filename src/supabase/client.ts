@@ -3,17 +3,17 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient } from '@supabase/supabase-js';
 
 const url = process.env.EXPO_PUBLIC_SUPABASE_URL;
-const anonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+const key = process.env.EXPO_PUBLIC_SUPABASE_KEY;
 
-if (!url || !anonKey) {
+if (!url || !key) {
   // Log instead of throwing so the splash still renders before .env.local is filled.
   console.warn(
-    '[supabase] EXPO_PUBLIC_SUPABASE_URL / EXPO_PUBLIC_SUPABASE_ANON_KEY are not set. ' +
+    '[supabase] EXPO_PUBLIC_SUPABASE_URL / EXPO_PUBLIC_SUPABASE_KEY are not set. ' +
       'Copy .env.example to .env.local and fill them in.',
   );
 }
 
-export const supabase = createClient(url ?? 'http://localhost', anonKey ?? 'public-anon-key', {
+export const supabase = createClient(url ?? 'http://localhost', key ?? 'public-anon-key', {
   auth: {
     storage: AsyncStorage,
     autoRefreshToken: true,
@@ -22,4 +22,4 @@ export const supabase = createClient(url ?? 'http://localhost', anonKey ?? 'publ
   },
 });
 
-export const supabaseConfigured = Boolean(url && anonKey);
+export const supabaseConfigured = Boolean(url && key);
