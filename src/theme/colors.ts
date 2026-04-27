@@ -2,6 +2,7 @@ export const colors = {
   bg: '#0A0A0A',
   bgElevated: '#141414',
   surface: '#1C1C1E',
+  card: '#1C1C1E',
   border: '#2A2A2E',
 
   gold: '#D4AF37',
@@ -19,6 +20,9 @@ export const colors = {
 
   danger: '#E2574C',
   success: '#3DB45A',
+  
+  gray: '#888888',
+  white: '#FFFFFF',
 } as const;
 
 export type ColorToken = keyof typeof colors;
