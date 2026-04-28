@@ -20,9 +20,12 @@ import { DiceTray } from '@/src/components/DiceTray';
 import { PlayerProfile } from '@/src/components/PlayerProfile';
 import { TokenDicePicker } from '@/src/components/TokenDicePicker';
 import { BOARD_SIZE, cellForToken } from '@/src/game/board';
+import { pathCellsForMove } from '@/src/game/rules';
 import type { Color, Player, TokenId } from '@/src/game/types';
 import { BoardCanvas } from '@/src/skia/Board';
+import { Particles, type Burst } from '@/src/skia/Particles';
 import { Token as TokenView } from '@/src/skia/Token';
+import { haptics } from '@/src/utils/haptics';
 import { chooseMove, useGameStore } from '@/src/stores/game';
 import { colors } from '@/src/theme/colors';
 import { spacing, typography } from '@/src/theme/typography';
@@ -36,7 +39,11 @@ const PLAYER_HEX: Record<Color, string> = {
 
 const THINK_MS = 700;
 const ROLL_ANIM_MS = 600;
-const MOVE_ANIM_MS = 400;
+const HOP_MS = 130;
+/** Minimum total move-anim duration so single-cell moves don't feel rushed. */
+const MIN_MOVE_MS = 220;
+/** Extra time after the attacker arrives so capture-back-to-home reads cleanly. */
+const CAPTURE_TAIL_MS = 260;
 
 export default function GameScreen() {
   const { matchId } = useLocalSearchParams<{ matchId: string }>();
@@ -51,6 +58,7 @@ export default function GameScreen() {
   const finishMoveAnim = useGameStore((s) => s.finishMoveAnim);
 
   const [pickerForToken, setPickerForToken] = useState<TokenId | null>(null);
+  const [bursts, setBursts] = useState<Burst[]>([]);
 
   // Layout
   const boardSize = Math.min(width - spacing.md * 2, 380);
@@ -68,7 +76,10 @@ export default function GameScreen() {
   // ── Effect: dice tumble has played out — settle the value. ──
   useEffect(() => {
     if (state.status !== 'rolling') return;
-    const t = setTimeout(() => finishRoll(), ROLL_ANIM_MS);
+    const t = setTimeout(() => {
+      finishRoll();
+      haptics.medium();
+    }, ROLL_ANIM_MS);
     return () => clearTimeout(t);
   }, [state.status, finishRoll]);
 
@@ -92,23 +103,87 @@ export default function GameScreen() {
   }, [state, currentPlayer, selectMove]);
 
   // ── Effect: token movement anim has played — settle into next status. ──
+  // Duration scales with the dice value (per-cell hops) plus a tail for captures.
   useEffect(() => {
     if (state.status !== 'animating') return;
-    const t = setTimeout(() => finishMoveAnim(), MOVE_ANIM_MS);
-    return () => clearTimeout(t);
-  }, [state.status, finishMoveAnim]);
+    const move = state.lastMove;
+    const hops = move ? Math.max(1, hopsForMove(move.from, move.dieValue)) : 1;
+    const base = Math.max(MIN_MOVE_MS, hops * HOP_MS);
+    const total = base + (move?.captures.length ? CAPTURE_TAIL_MS : 0);
+    // Light land tick at attacker arrival, only when no capture (capture has its own heavy hit).
+    const landAt = move?.captures.length ? null : setTimeout(() => haptics.light(), base);
+    const t = setTimeout(() => finishMoveAnim(), total);
+    return () => {
+      clearTimeout(t);
+      if (landAt) clearTimeout(landAt);
+    };
+  }, [state.status, state.lastMove, finishMoveAnim]);
 
-  // ── Effect: winner → navigate to result. ──
+  // ── Effect: winner → fire celebration, then navigate to result. ──
   useEffect(() => {
     if (!state.winnerColor) return;
+    const winColor = state.winnerColor;
+    const youWon = !state.players.find((p) => p.color === winColor)?.isAI;
+    if (youWon) haptics.success();
+    else haptics.warning();
+    setBursts((bs) => [
+      ...bs,
+      {
+        id: `win-${Date.now()}`,
+        cx: boardSize / 2,
+        cy: boardSize / 2,
+        color: PLAYER_HEX[winColor],
+        kind: 'win',
+      },
+    ]);
     const t = setTimeout(() => {
       router.replace({
         pathname: '/game/result',
-        params: { winner: state.winnerColor as string },
+        params: { winner: winColor as string },
       });
-    }, 900);
+    }, 1500);
     return () => clearTimeout(t);
-  }, [state.winnerColor]);
+  }, [state.winnerColor, boardSize]);
+
+  // ── Effect: capture → fire a particle burst at the captured cell, timed to
+  // land just as the captured token starts flying home. ──
+  useEffect(() => {
+    const move = state.lastMove;
+    if (!move?.captures.length) return;
+    const tokens = state.players.flatMap((p) => p.tokens);
+    const moving = tokens.find((tt) => tt.id === move.tokenId);
+    if (!moving) return;
+    const dest = cellForToken(moving);
+    const cx = (dest.col + 0.5) * cellPx;
+    const cy = (dest.row + 0.5) * cellPx;
+    const arriveMs = Math.max(1, hopsForMove(move.from, move.dieValue)) * HOP_MS;
+    const baseId = `cap-${Date.now()}`;
+    const captureColors: Color[] = move.captures
+      .map((id) => tokens.find((tt) => tt.id === id)?.color)
+      .filter((c): c is Color => !!c);
+
+    const t = setTimeout(() => {
+      haptics.heavy();
+      setBursts((bs) => [
+        ...bs,
+        ...captureColors.map((c, i) => ({
+          id: `${baseId}-${i}`,
+          cx,
+          cy,
+          color: PLAYER_HEX[c],
+          kind: 'capture' as const,
+        })),
+      ]);
+    }, arriveMs);
+    return () => clearTimeout(t);
+  }, [state.lastMove, state.players, cellPx]);
+
+  // ── Effect: prune stale bursts so they don't pile up across a long match. ──
+  useEffect(() => {
+    if (bursts.length === 0) return;
+    const t = setTimeout(() => setBursts([]), 1600);
+    return () => clearTimeout(t);
+  }, [bursts]);
 
   // ── Effect: clear picker when context changes. ──
   useEffect(() => {
@@ -118,6 +193,7 @@ export default function GameScreen() {
   // ── handlers ──
   function onHumanRoll() {
     if (!isMyTurn || state.status !== 'awaiting_roll') return;
+    haptics.tap();
     beginRoll();
   }
 
@@ -129,6 +205,7 @@ export default function GameScreen() {
     }
     const opts = validMoves.filter((m) => m.tokenId === tokenId);
     if (opts.length === 0) return;
+    haptics.tap();
     const uniqueValues = Array.from(new Set(opts.map((o) => o.dieValue)));
     if (uniqueValues.length === 1) {
       setPickerForToken(null);
@@ -144,7 +221,10 @@ export default function GameScreen() {
       (m) => m.tokenId === pickerForToken && m.dieValue === value,
     );
     setPickerForToken(null);
-    if (move) selectMove(move);
+    if (move) {
+      haptics.tap();
+      selectMove(move);
+    }
   }
 
   // ── derived ──
@@ -157,6 +237,28 @@ export default function GameScreen() {
     () => new Set(validMoves.map((m) => m.tokenId)),
     [validMoves],
   );
+
+  // Hop path for the moving token (in pixel space) + delay for captured tokens
+  // so they fly home AFTER the attacker arrives.
+  const moveAnim = useMemo(() => {
+    const move = state.lastMove;
+    if (!move) return null;
+    const movingToken = state.players.flatMap((p) => p.tokens).find((t) => t.id === move.tokenId);
+    if (!movingToken) return null;
+    const cells = pathCellsForMove(movingToken.color, move.from, move.dieValue);
+    const hopPath = cells.map((c) => ({
+      cx: (c.col + 0.5) * cellPx,
+      cy: (c.row + 0.5) * cellPx,
+    }));
+    const captureDelayMs = Math.max(0, hopPath.length - 1) * HOP_MS;
+    const capturedIds = new Set(move.captures);
+    return {
+      movingTokenId: move.tokenId,
+      hopPath,
+      capturedIds,
+      captureDelayMs,
+    };
+  }, [state.lastMove, state.players, cellPx]);
 
   const pickerValues = pickerForToken
     ? Array.from(
@@ -214,6 +316,8 @@ export default function GameScreen() {
               const cx = (cell.col + 0.5) * cellPx;
               const cy = (cell.row + 0.5) * cellPx;
               const movable = isMyTurn && state.status === 'awaiting_move' && movableTokenIds.has(t.id);
+              const isMoving = moveAnim?.movingTokenId === t.id;
+              const isCaptured = moveAnim?.capturedIds.has(t.id) ?? false;
               return (
                 <TokenView
                   key={t.id}
@@ -223,6 +327,9 @@ export default function GameScreen() {
                   size={tokenSize}
                   selectable={movable}
                   highlighted={movable}
+                  hopPath={isMoving ? moveAnim?.hopPath : undefined}
+                  hopMs={HOP_MS}
+                  delayMs={isCaptured ? moveAnim?.captureDelayMs ?? 0 : 0}
                   onPress={() => onTokenTap(t.id)}
                 />
               );
@@ -236,6 +343,9 @@ export default function GameScreen() {
                 onPick={onPickerSelect}
               />
             )}
+          </View>
+          <View style={StyleSheet.absoluteFill} pointerEvents="none">
+            <Particles width={boardSize} height={boardSize} bursts={bursts} />
           </View>
         </View>
       </View>
@@ -294,6 +404,12 @@ function ProfileRow({
       )}
     </View>
   );
+}
+
+/** Number of visual cell hops the move animation will play. Home → start counts as 1. */
+function hopsForMove(from: { kind: string }, dieValue: number): number {
+  if (from.kind === 'home') return 1;
+  return dieValue;
 }
 
 function makeHint(

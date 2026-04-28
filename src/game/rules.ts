@@ -8,6 +8,9 @@
 
 import {
   COLOR_START_INDEX,
+  FINISH_CELL,
+  HOME_BASE_SLOTS,
+  HOME_COL_CELLS,
   HOME_COL_LENGTH,
   OUTER_TRACK,
   SAFE_TRACK_INDICES,
@@ -16,6 +19,7 @@ import {
   isSameTrackCell,
   trackIndexForHop,
 } from './board';
+import type { Cell } from './board';
 import type {
   Color,
   GameState,
@@ -59,6 +63,7 @@ export function makeInitialGameState(humanColor: Color = 'red', botCount = 3): G
     status: 'awaiting_roll',
     winnerColor: null,
     lastRollByColor: {},
+    lastMove: null,
   };
 }
 
@@ -217,6 +222,7 @@ export function applyMove(state: GameState, move: MoveOption): GameState {
     winnerColor: won ? movedPlayer.color : state.winnerColor,
     status: 'animating',
     consecutiveSixes: 0,
+    lastMove: move,
   };
 }
 
@@ -228,15 +234,16 @@ export function applyMove(state: GameState, move: MoveOption): GameState {
  *  - empty pool → advance turn
  */
 export function finishMove(state: GameState): GameState {
-  if (state.winnerColor) return { ...state, status: 'finished' };
-  if (state.dicePool.length > 0) {
-    const color = state.players[state.currentPlayerIdx].color;
-    const moves = getValidMoves(state, color);
-    if (moves.length > 0) return { ...state, status: 'awaiting_move' };
+  const cleared = { ...state, lastMove: null };
+  if (cleared.winnerColor) return { ...cleared, status: 'finished' };
+  if (cleared.dicePool.length > 0) {
+    const color = cleared.players[cleared.currentPlayerIdx].color;
+    const moves = getValidMoves(cleared, color);
+    if (moves.length > 0) return { ...cleared, status: 'awaiting_move' };
     // dead pool — skip remaining
-    return advanceToNextPlayer({ ...state, dicePool: [] });
+    return advanceToNextPlayer({ ...cleared, dicePool: [] });
   }
-  return advanceToNextPlayer(state);
+  return advanceToNextPlayer(cleared);
 }
 
 /** Advance to the next player who hasn't already finished. */
@@ -253,6 +260,7 @@ export function advanceToNextPlayer(state: GameState): GameState {
     dicePool: [],
     consecutiveSixes: 0,
     status: 'awaiting_roll',
+    lastMove: null,
   };
 }
 
@@ -280,6 +288,52 @@ function removeOne(arr: number[], v: number): number[] {
   const i = arr.indexOf(v);
   if (i < 0) return arr.slice();
   return [...arr.slice(0, i), ...arr.slice(i + 1)];
+}
+
+// ---------- path geometry (UI uses this for cell-by-cell hop animation) ----------
+
+/**
+ * Sequence of board cells a token of `color` traverses for a roll of `dieValue`
+ * starting from `from`. Includes the start cell and the destination cell. For
+ * an illegal move, returns just the start cell. Home → start is one big hop
+ * (length 2) since there are no intermediate cells in the home base.
+ */
+export function pathCellsForMove(
+  color: Color,
+  from: TokenLocation,
+  dieValue: number,
+): Cell[] {
+  const cells: Cell[] = [cellForLocation(color, from)];
+  if (from.kind === 'home') {
+    if (dieValue !== 6) return cells;
+    cells.push(OUTER_TRACK[COLOR_START_INDEX[color]]);
+    return cells;
+  }
+  let cur: TokenLocation = from;
+  for (let i = 0; i < dieValue; i++) {
+    const next = stepOne(color, cur);
+    if (!next) break;
+    cells.push(cellForLocation(color, next));
+    cur = next;
+  }
+  return cells;
+}
+
+function stepOne(color: Color, loc: TokenLocation): TokenLocation | null {
+  return tryMove({ id: `${color}-0` as TokenId, color, location: loc }, 1);
+}
+
+function cellForLocation(color: Color, loc: TokenLocation): Cell {
+  switch (loc.kind) {
+    case 'home':
+      return HOME_BASE_SLOTS[color][loc.slot];
+    case 'track':
+      return OUTER_TRACK[loc.index];
+    case 'home_col':
+      return HOME_COL_CELLS[color][loc.index];
+    case 'finished':
+      return FINISH_CELL;
+  }
 }
 
 // ---------- queries ----------

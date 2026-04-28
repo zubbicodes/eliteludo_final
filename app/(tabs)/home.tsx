@@ -2,8 +2,12 @@ import { useRouter } from 'expo-router';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '@/src/theme/colors';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
+
+import { DailyRewardModal } from '@/src/components/DailyRewardModal';
+import { useWalletStore } from '@/src/stores/wallet';
+import { haptics } from '@/src/utils/haptics';
 
 const GAME_MODES = [
   { id: '1v1', title: 'Play 1 on 1', icon: 'people', color: colors.gold },
@@ -14,6 +18,34 @@ const GAME_MODES = [
 
 export default function HomeScreen() {
   const router = useRouter();
+  const coins = useWalletStore((s) => s.coins);
+  const hydrated = useWalletStore((s) => s.hydrated);
+  const hydrate = useWalletStore((s) => s.hydrate);
+  const claimDaily = useWalletStore((s) => s.claimDaily);
+  const pendingClaim = useWalletStore((s) => s.pendingClaim);
+
+  const [rewardOpen, setRewardOpen] = useState(false);
+  const [pendingDay, setPendingDay] = useState(1);
+
+  useEffect(() => {
+    hydrate();
+  }, [hydrate]);
+
+  // Once hydrated, decide whether to show the daily reward modal.
+  useEffect(() => {
+    if (!hydrated || rewardOpen) return;
+    const pending = pendingClaim();
+    if (pending) {
+      setPendingDay(pending.day);
+      setRewardOpen(true);
+    }
+  }, [hydrated, pendingClaim, rewardOpen]);
+
+  const onClaim = () => {
+    const result = claimDaily();
+    if (result) haptics.success();
+    setRewardOpen(false);
+  };
 
   const startGame = (mode: string) => {
     if (mode === 'vs-ai') {
@@ -31,7 +63,7 @@ export default function HomeScreen() {
         </TouchableOpacity>
         <View style={styles.coinsContainer}>
           <Ionicons name="logo-bitcoin" size={20} color={colors.gold} />
-          <Text style={styles.coinsText}>1,000</Text>
+          <Text style={styles.coinsText}>{coins.toLocaleString()}</Text>
         </View>
       </View>
 
@@ -59,6 +91,13 @@ export default function HomeScreen() {
           ))}
         </Animated.View>
       </ScrollView>
+
+      <DailyRewardModal
+        visible={rewardOpen}
+        pendingDay={pendingDay}
+        onClaim={onClaim}
+        onClose={() => setRewardOpen(false)}
+      />
     </View>
   );
 }

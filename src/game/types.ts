@@ -50,6 +50,8 @@ export type GameState = {
   winnerColor: Color | null;
   /** Most-recently rolled die per color. Persists across turns so profiles can show "last roll". */
   lastRollByColor: Partial<Record<Color, number>>;
+  /** The move currently being animated. Set by `applyMove`, cleared by `finishMove`. */
+  lastMove: MoveOption | null;
 };
 
 export type MoveOption = {
