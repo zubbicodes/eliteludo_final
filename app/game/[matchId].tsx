@@ -26,6 +26,7 @@ import { BoardCanvas } from '@/src/skia/Board';
 import { Particles, type Burst } from '@/src/skia/Particles';
 import { Token as TokenView } from '@/src/skia/Token';
 import { haptics } from '@/src/utils/haptics';
+import { useProfileStore } from '@/src/stores/profile';
 import { chooseMove, useGameStore } from '@/src/stores/game';
 import { colors } from '@/src/theme/colors';
 import { spacing, typography } from '@/src/theme/typography';
@@ -60,15 +61,27 @@ export default function GameScreen() {
   const [pickerForToken, setPickerForToken] = useState<TokenId | null>(null);
   const [bursts, setBursts] = useState<Burst[]>([]);
 
+  const profile = useProfileStore((s) => s.profile);
+  const hydrateProfile = useProfileStore((s) => s.hydrate);
+
+  useEffect(() => {
+    hydrateProfile();
+  }, [hydrateProfile]);
+
   // Layout
   const boardSize = Math.min(width - spacing.md * 2, 380);
   const cellPx = boardSize / BOARD_SIZE;
   const tokenSize = cellPx * 0.78;
 
-  // Init game on mount
+  // Init game on mount. Re-init when profile resolves so the human seat
+  // reflects the user's picked color/name/avatar.
   useEffect(() => {
-    newGame('red', 3);
-  }, [matchId, newGame]);
+    const humanColor = (profile?.colorId as Color | undefined) ?? 'red';
+    const human = profile
+      ? { name: profile.username, avatarId: profile.avatarId }
+      : undefined;
+    newGame(humanColor, 3, human);
+  }, [matchId, newGame, profile?.colorId, profile?.username, profile?.avatarId]);
 
   const currentPlayer: Player | undefined = state.players[state.currentPlayerIdx];
   const isMyTurn = !!currentPlayer && !currentPlayer.isAI;
