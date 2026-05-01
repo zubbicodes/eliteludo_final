@@ -23,13 +23,16 @@ type GameStore = {
   validMoves: MoveOption[];
 
   newGame: (humanColor?: Color, botCount?: number, human?: HumanProfile) => void;
+  /** Load an existing game state (used for multiplayer matches loaded from DB). */
+  loadGame: (state: GameState) => void;
   /** Begin the dice tumble animation. status: awaiting_roll → rolling. */
   beginRoll: () => void;
   /**
    * Materialize the roll. status: rolling → awaiting_roll | awaiting_move | next-turn.
-   * Returns the value that was rolled (used by the screen to show the settled die).
+   * Pass externalValue to use a server-generated die (multiplayer); omit for local RNG.
+   * Returns the value that was rolled.
    */
-  finishRoll: () => number;
+  finishRoll: (externalValue?: number) => number;
   /** Apply a chosen move + die. status: awaiting_move → animating. */
   selectMove: (move: MoveOption) => void;
   /** Settle the move animation. Decides next state. */
@@ -46,11 +49,14 @@ export const useGameStore = create<GameStore>((set, get) => ({
       validMoves: [],
     }),
 
+  loadGame: (gameState) =>
+    set({ state: gameState, validMoves: [] }),
+
   beginRoll: () =>
     set((s) => ({ state: { ...s.state, status: 'rolling' } })),
 
-  finishRoll: () => {
-    const value = rollDice();
+  finishRoll: (externalValue?: number) => {
+    const value = externalValue ?? rollDice();
     let next = addRoll(get().state, value);
     let moves = next.status === 'awaiting_move'
       ? getValidMoves(next, next.players[next.currentPlayerIdx].color)
