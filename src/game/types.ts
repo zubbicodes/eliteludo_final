@@ -62,3 +62,14 @@ export type MoveOption = {
   to: TokenLocation;
   captures: TokenId[];
 };
+
+/** Serialized board state stored in matches.board_state JSONB column. */
+export type MatchBoardState = GameState;
+
+/** Player entry in the matches.players JSONB array. */
+export type MatchPlayer = {
+  user_id: string;
+  color: Color;
+  username: string;
+  avatar_id: number;
+};

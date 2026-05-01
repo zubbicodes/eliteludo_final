@@ -1,12 +1,12 @@
-// Solo-vs-AI game screen for the dice-pool turn machine.
-// Layout: header → top profiles → board → bottom profiles → dice tray.
+// Game screen — solo vs-AI and 1v1 multiplayer.
+// Solo path (matchId starts with "solo-"): fully client-side, no server calls.
+// Multiplayer path: dice via roll-dice Edge Function, board sync via Realtime.
 //
-// Turn flow handled by 5 independent effects (see comments below). Each effect
-// schedules at most one timer and cleans it up on state change, avoiding the
-// timer-clobber bug from chaining setTimeout + setState in a single effect.
+// Turn flow handled by independent effects. Each effect schedules at most one
+// timer and cleans up on state change to avoid timer-clobber bugs.
 
 import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Pressable,
   StyleSheet,
@@ -21,7 +21,14 @@ import { PlayerProfile } from '@/src/components/PlayerProfile';
 import { TokenDicePicker } from '@/src/components/TokenDicePicker';
 import { BOARD_SIZE, cellForToken } from '@/src/game/board';
 import { pathCellsForMove } from '@/src/game/rules';
-import type { Color, Player, TokenId } from '@/src/game/types';
+import type { Color, MatchPlayer, Player, TokenId } from '@/src/game/types';
+import { supabase } from '@/src/supabase/client';
+import {
+  getMatch,
+  pushBoardState,
+  rollDiceServer,
+  subscribeMatch,
+} from '@/src/supabase/matches';
 import { BoardCanvas } from '@/src/skia/Board';
 import { Particles, type Burst } from '@/src/skia/Particles';
 import { Token as TokenView } from '@/src/skia/Token';
@@ -41,18 +48,20 @@ const PLAYER_HEX: Record<Color, string> = {
 const THINK_MS = 700;
 const ROLL_ANIM_MS = 600;
 const HOP_MS = 130;
-/** Minimum total move-anim duration so single-cell moves don't feel rushed. */
 const MIN_MOVE_MS = 220;
-/** Extra time after the attacker arrives so capture-back-to-home reads cleanly. */
 const CAPTURE_TAIL_MS = 260;
 
 export default function GameScreen() {
   const { matchId } = useLocalSearchParams<{ matchId: string }>();
   const { width } = useWindowDimensions();
 
+  // Solo = client-only path; multiplayer = server dice + Realtime sync
+  const isSolo = !matchId || matchId.startsWith('solo-');
+
   const state = useGameStore((s) => s.state);
   const validMoves = useGameStore((s) => s.validMoves);
   const newGame = useGameStore((s) => s.newGame);
+  const loadGame = useGameStore((s) => s.loadGame);
   const beginRoll = useGameStore((s) => s.beginRoll);
   const finishRoll = useGameStore((s) => s.finishRoll);
   const selectMove = useGameStore((s) => s.selectMove);
@@ -64,48 +73,128 @@ export default function GameScreen() {
   const profile = useProfileStore((s) => s.profile);
   const hydrateProfile = useProfileStore((s) => s.hydrate);
 
+  // ── Multiplayer-specific state ──
+  const [myColor, setMyColor] = useState<Color | null>(null);
+  // Stable refs to avoid stale closures in Realtime callbacks
+  const stateRef = useRef(state);
+  const myColorRef = useRef(myColor);
+  const mpPlayersRef = useRef<MatchPlayer[] | null>(null);
+  const prevPlayerIdxRef = useRef(-1);
+
+  useEffect(() => { stateRef.current = state; }, [state]);
+  useEffect(() => { myColorRef.current = myColor; }, [myColor]);
+
   useEffect(() => {
     hydrateProfile();
   }, [hydrateProfile]);
 
-  // Layout
   const boardSize = Math.min(width - spacing.md * 2, 380);
   const cellPx = boardSize / BOARD_SIZE;
   const tokenSize = cellPx * 0.78;
 
-  // Init game on mount. Re-init when profile resolves so the human seat
-  // reflects the user's picked color/name/avatar.
+  // ── Effect: Solo init — new game when mount or profile settles. ──
   useEffect(() => {
+    if (!isSolo) return;
     const humanColor = (profile?.colorId as Color | undefined) ?? 'red';
     const human = profile
       ? { name: profile.username, avatarId: profile.avatarId }
       : undefined;
     newGame(humanColor, 3, human);
-  }, [matchId, newGame, profile?.colorId, profile?.username, profile?.avatarId]);
+  }, [isSolo, matchId, newGame, profile?.colorId, profile?.username, profile?.avatarId]);
+
+  // ── Effect: Multiplayer init — load from DB and subscribe to Realtime. ──
+  useEffect(() => {
+    if (isSolo || !matchId) return;
+
+    let unsubscribeRealtime: (() => void) | null = null;
+
+    const init = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
+      const match = await getMatch(matchId);
+      if (!match) return;
+
+      const me = match.players.find((p) => p.user_id === session.user.id);
+      if (!me) return;
+
+      setMyColor(me.color);
+      myColorRef.current = me.color;
+      mpPlayersRef.current = match.players;
+      prevPlayerIdxRef.current = match.board_state.currentPlayerIdx;
+      loadGame(match.board_state);
+
+      unsubscribeRealtime = subscribeMatch(matchId, (newBoardState) => {
+        const s = stateRef.current;
+        const mc = myColorRef.current;
+        // Don't overwrite local state while I'm actively playing my turn
+        if (mc) {
+          const myIdx = s.players.findIndex((p) => p.color === mc);
+          if (
+            s.currentPlayerIdx === myIdx &&
+            (s.status === 'rolling' ||
+              s.status === 'awaiting_move' ||
+              s.status === 'animating')
+          ) {
+            return;
+          }
+        }
+        loadGame(newBoardState);
+      });
+    };
+
+    init();
+    return () => { unsubscribeRealtime?.(); };
+  }, [isSolo, matchId]);
 
   const currentPlayer: Player | undefined = state.players[state.currentPlayerIdx];
-  const isMyTurn = !!currentPlayer && !currentPlayer.isAI;
+
+  const isMyTurn = isSolo
+    ? !!currentPlayer && !currentPlayer.isAI
+    : !!currentPlayer && currentPlayer.color === myColor;
 
   // ── Effect: dice tumble has played out — settle the value. ──
+  // Solo: use local RNG after a fixed timeout.
+  // Multiplayer: call roll-dice EF, wait for response, then settle.
   useEffect(() => {
     if (state.status !== 'rolling') return;
-    const t = setTimeout(() => {
-      finishRoll();
-      haptics.medium();
-    }, ROLL_ANIM_MS);
-    return () => clearTimeout(t);
-  }, [state.status, finishRoll]);
+    if (!isMyTurn) return; // opponent's roll — we'll get it via Realtime
 
-  // ── Effect: AI is awaiting_roll — schedule a roll. ──
+    if (isSolo) {
+      const t = setTimeout(() => {
+        finishRoll();
+        haptics.medium();
+      }, ROLL_ANIM_MS);
+      return () => clearTimeout(t);
+    }
+
+    // Multiplayer: fire EF, settle after at least ROLL_ANIM_MS
+    let cancelled = false;
+    const startAt = Date.now();
+    rollDiceServer(matchId!).then((result) => {
+      if (cancelled) return;
+      const wait = Math.max(0, ROLL_ANIM_MS - (Date.now() - startAt));
+      setTimeout(() => {
+        if (cancelled) return;
+        finishRoll(result?.value);
+        haptics.medium();
+      }, wait);
+    });
+    return () => { cancelled = true; };
+  }, [state.status, isMyTurn, isSolo, matchId, finishRoll]);
+
+  // ── Effect: AI is awaiting_roll — schedule a roll (solo only). ──
   useEffect(() => {
+    if (!isSolo) return;
     if (state.status !== 'awaiting_roll' || !currentPlayer?.isAI) return;
     if (state.winnerColor) return;
     const t = setTimeout(() => beginRoll(), THINK_MS);
     return () => clearTimeout(t);
-  }, [state.status, currentPlayer, state.winnerColor, beginRoll]);
+  }, [isSolo, state.status, currentPlayer, state.winnerColor, beginRoll]);
 
-  // ── Effect: AI is awaiting_move — schedule a pick. ──
+  // ── Effect: AI is awaiting_move — schedule a pick (solo only). ──
   useEffect(() => {
+    if (!isSolo) return;
     if (state.status !== 'awaiting_move' || !currentPlayer?.isAI) return;
     if (state.winnerColor) return;
     const t = setTimeout(() => {
@@ -113,17 +202,15 @@ export default function GameScreen() {
       if (pick) selectMove(pick);
     }, THINK_MS);
     return () => clearTimeout(t);
-  }, [state, currentPlayer, selectMove]);
+  }, [isSolo, state, currentPlayer, selectMove]);
 
   // ── Effect: token movement anim has played — settle into next status. ──
-  // Duration scales with the dice value (per-cell hops) plus a tail for captures.
   useEffect(() => {
     if (state.status !== 'animating') return;
     const move = state.lastMove;
     const hops = move ? Math.max(1, hopsForMove(move.from, move.dieValue)) : 1;
     const base = Math.max(MIN_MOVE_MS, hops * HOP_MS);
     const total = base + (move?.captures.length ? CAPTURE_TAIL_MS : 0);
-    // Light land tick at attacker arrival, only when no capture (capture has its own heavy hit).
     const landAt = move?.captures.length ? null : setTimeout(() => haptics.light(), base);
     const t = setTimeout(() => finishMoveAnim(), total);
     return () => {
@@ -132,11 +219,13 @@ export default function GameScreen() {
     };
   }, [state.status, state.lastMove, finishMoveAnim]);
 
-  // ── Effect: winner → fire celebration, then navigate to result. ──
+  // ── Effect: winner → celebrate, then navigate to result. ──
   useEffect(() => {
     if (!state.winnerColor) return;
     const winColor = state.winnerColor;
-    const youWon = !state.players.find((p) => p.color === winColor)?.isAI;
+    const youWon = isSolo
+      ? !state.players.find((p) => p.color === winColor)?.isAI
+      : winColor === myColor;
     if (youWon) haptics.success();
     else haptics.warning();
     setBursts((bs) => [
@@ -156,10 +245,9 @@ export default function GameScreen() {
       });
     }, 1500);
     return () => clearTimeout(t);
-  }, [state.winnerColor, boardSize]);
+  }, [state.winnerColor, boardSize, isSolo, myColor]);
 
-  // ── Effect: capture → fire a particle burst at the captured cell, timed to
-  // land just as the captured token starts flying home. ──
+  // ── Effect: capture → particle burst. ──
   useEffect(() => {
     const move = state.lastMove;
     if (!move?.captures.length) return;
@@ -174,7 +262,6 @@ export default function GameScreen() {
     const captureColors: Color[] = move.captures
       .map((id) => tokens.find((tt) => tt.id === id)?.color)
       .filter((c): c is Color => !!c);
-
     const t = setTimeout(() => {
       haptics.heavy();
       setBursts((bs) => [
@@ -191,19 +278,37 @@ export default function GameScreen() {
     return () => clearTimeout(t);
   }, [state.lastMove, state.players, cellPx]);
 
-  // ── Effect: prune stale bursts so they don't pile up across a long match. ──
+  // ── Effect: prune stale bursts. ──
   useEffect(() => {
     if (bursts.length === 0) return;
     const t = setTimeout(() => setBursts([]), 1600);
     return () => clearTimeout(t);
   }, [bursts]);
 
-  // ── Effect: clear picker when context changes. ──
+  // ── Effect: clear token picker on context change. ──
   useEffect(() => {
     setPickerForToken(null);
   }, [state.currentPlayerIdx, state.dicePool.length, state.status]);
 
+  // ── Effect (multiplayer): push board state to DB when my turn ends. ──
+  useEffect(() => {
+    if (isSolo || !matchId || !myColor) return;
+    if (state.status !== 'awaiting_roll' && state.status !== 'finished') return;
+
+    const myIdx = state.players.findIndex((p) => p.color === myColor);
+    const prev = prevPlayerIdxRef.current;
+    prevPlayerIdxRef.current = state.currentPlayerIdx;
+
+    // Push only when my turn just ended (currentPlayerIdx moved away from me)
+    if (prev === myIdx && state.currentPlayerIdx !== myIdx) {
+      const nextColor = state.players[state.currentPlayerIdx].color;
+      const nextEntry = mpPlayersRef.current?.find((p) => p.color === nextColor);
+      pushBoardState(matchId, state, nextEntry?.user_id ?? null);
+    }
+  }, [state.currentPlayerIdx, state.status, isSolo, matchId, myColor]);
+
   // ── handlers ──
+
   function onHumanRoll() {
     if (!isMyTurn || state.status !== 'awaiting_roll') return;
     haptics.tap();
@@ -251,8 +356,6 @@ export default function GameScreen() {
     [validMoves],
   );
 
-  // Hop path for the moving token (in pixel space) + delay for captured tokens
-  // so they fly home AFTER the attacker arrives.
   const moveAnim = useMemo(() => {
     const move = state.lastMove;
     if (!move) return null;
@@ -265,12 +368,7 @@ export default function GameScreen() {
     }));
     const captureDelayMs = Math.max(0, hopPath.length - 1) * HOP_MS;
     const capturedIds = new Set(move.captures);
-    return {
-      movingTokenId: move.tokenId,
-      hopPath,
-      capturedIds,
-      captureDelayMs,
-    };
+    return { movingTokenId: move.tokenId, hopPath, capturedIds, captureDelayMs };
   }, [state.lastMove, state.players, cellPx]);
 
   const pickerValues = pickerForToken
@@ -290,7 +388,6 @@ export default function GameScreen() {
   })();
 
   const byColor = new Map<Color, Player>(state.players.map((p) => [p.color, p]));
-
   const rollLabel = state.dicePool.length > 0 ? 'ROLL AGAIN' : 'ROLL';
   const hint = makeHint(state, isMyTurn, currentPlayer);
 
@@ -310,7 +407,7 @@ export default function GameScreen() {
             {isMyTurn ? 'Your turn' : `${currentPlayer.name}'s turn`}
           </Text>
         </View>
-        <Text style={styles.matchId}>#{matchId ?? 'local'}</Text>
+        <Text style={styles.matchId}>#{(matchId ?? 'local').slice(-6)}</Text>
       </View>
 
       <ProfileRow
@@ -419,7 +516,6 @@ function ProfileRow({
   );
 }
 
-/** Number of visual cell hops the move animation will play. Home → start counts as 1. */
 function hopsForMove(from: { kind: string }, dieValue: number): number {
   if (from.kind === 'home') return 1;
   return dieValue;
@@ -453,10 +549,7 @@ function makeHint(
 }
 
 const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: colors.bg,
-  },
+  root: { flex: 1, backgroundColor: colors.bg },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
