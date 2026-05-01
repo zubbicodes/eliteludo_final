@@ -1,5 +1,5 @@
 import { router } from 'expo-router';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, {
@@ -10,19 +10,19 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 
-import { useProfileStore } from '@/src/stores/profile';
+import { useAuthStore } from '@/src/stores/auth';
 import { useSettingsStore } from '@/src/stores/settings';
 import { colors } from '@/src/theme/colors';
 import { spacing, typography } from '@/src/theme/typography';
 
 export default function SplashScreen() {
   const glow = useSharedValue(0.4);
-  const hydrateProfile = useProfileStore((s) => s.hydrate);
   const hydrateSettings = useSettingsStore((s) => s.hydrate);
+  const isHydrating = useAuthStore((s) => s.isHydrating);
+  const session = useAuthStore((s) => s.session);
+  const [splashDone, setSplashDone] = useState(false);
 
   useEffect(() => {
-    // Warm up persisted stores while the splash is on screen.
-    hydrateProfile();
     hydrateSettings();
 
     glow.value = withRepeat(
@@ -31,11 +31,19 @@ export default function SplashScreen() {
       true,
     );
 
-    const timer = setTimeout(() => {
-      router.replace('/auth/login');
-    }, 1800);
+    const timer = setTimeout(() => setSplashDone(true), 1800);
     return () => clearTimeout(timer);
-  }, [glow, hydrateProfile, hydrateSettings]);
+  }, [glow, hydrateSettings]);
+
+  // Route once the splash animation has played AND auth has resolved.
+  useEffect(() => {
+    if (!splashDone || isHydrating) return;
+    if (session) {
+      router.replace('/(tabs)/home');
+    } else {
+      router.replace('/auth/login');
+    }
+  }, [splashDone, isHydrating, session]);
 
   const dot0 = useAnimatedStyle(() => ({
     opacity: 0.3 + 0.7 * Math.max(0, Math.sin(glow.value * Math.PI)),

@@ -14,6 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useProfileStore } from '@/src/stores/profile';
 import { useSettingsStore, type Language } from '@/src/stores/settings';
+import { supabase } from '@/src/supabase/client';
 import { colors } from '@/src/theme/colors';
 import { radius, spacing, typography } from '@/src/theme/typography';
 import { haptics } from '@/src/utils/haptics';
@@ -45,7 +46,8 @@ export default function SettingsScreen() {
         onPress: async () => {
           setSigningOut(true);
           haptics.warning();
-          await clearProfile();
+          clearProfile();
+          await supabase.auth.signOut();
           router.replace('/auth/login');
         },
       },

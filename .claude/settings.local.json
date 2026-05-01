@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm --version)",
+      "Bash(git --version)",
+      "Bash(mkdir -p docs)",
+      "Bash(mv PRD.md MasterPromot.md docs/)",
+      "Bash(npx --yes create-expo-app@latest . --template default --no-install)",
+      "Bash(npm install *)",
+      "Bash(npx expo *)",
+      "Bash(npx tsc *)",
+      "Bash(git remote *)",
+      "Bash(git branch *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git check-ignore *)",
+      "Bash(git push *)",
+      "Bash(claude --version)",
+      "Bash(claude mcp *)",
+      "mcp__plugin_figma_figma__whoami",
+      "mcp__plugin_figma_figma__get_metadata",
+      "Bash(git -C /home/zubbihawk/Code/elite_ludo_final log --oneline -10)",
+      "Bash(git *)"
+    ]
+  }
+}

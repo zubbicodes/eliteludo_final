@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Link, useRouter } from 'expo-router';
 import { useState } from 'react';
 import {
+  Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -15,6 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 
 import { SocialButton } from '@/src/components/SocialButton';
+import { supabase } from '@/src/supabase/client';
 import { colors } from '@/src/theme/colors';
 import { radius, spacing, typography } from '@/src/theme/typography';
 import { haptics } from '@/src/utils/haptics';
@@ -24,21 +26,42 @@ export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [loadingProvider, setLoadingProvider] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const stubAuth = (provider: string) => {
+  const onEmailLogin = async () => {
+    if (!email.trim() || !password) return;
     haptics.tap();
-    setLoadingProvider(provider);
-    setTimeout(() => {
-      setLoadingProvider(null);
+    setLoading(true);
+    setError(null);
+    const { error: err } = await supabase.auth.signInWithPassword({
+      email: email.trim(),
+      password,
+    });
+    setLoading(false);
+    if (err) {
+      setError(err.message);
+      haptics.warning();
+    } else {
+      haptics.success();
       router.replace('/(tabs)/home');
-    }, 600);
+    }
   };
 
-  const onEmailLogin = () => {
+  const onPhoneOtp = () => {
     haptics.tap();
-    router.replace('/(tabs)/home');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    router.push('/auth/phone-login' as any);
   };
+
+  const onGoogleLogin = () => {
+    Alert.alert(
+      'Coming soon',
+      'Google sign-in requires additional setup. Use email or phone for now.',
+    );
+  };
+
+  const canSubmit = email.trim().length > 0 && password.length >= 6;
 
   return (
     <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
@@ -63,24 +86,8 @@ export default function LoginScreen() {
           </Animated.View>
 
           <Animated.View entering={FadeInDown.delay(250).duration(500)} style={styles.providers}>
-            <SocialButton
-              provider="google"
-              onPress={() => stubAuth('google')}
-              loading={loadingProvider === 'google'}
-              disabled={loadingProvider !== null && loadingProvider !== 'google'}
-            />
-            <SocialButton
-              provider="facebook"
-              onPress={() => stubAuth('facebook')}
-              loading={loadingProvider === 'facebook'}
-              disabled={loadingProvider !== null && loadingProvider !== 'facebook'}
-            />
-            <SocialButton
-              provider="phone"
-              onPress={() => stubAuth('phone')}
-              loading={loadingProvider === 'phone'}
-              disabled={loadingProvider !== null && loadingProvider !== 'phone'}
-            />
+            <SocialButton provider="google" onPress={onGoogleLogin} />
+            <SocialButton provider="phone" onPress={onPhoneOtp} />
           </Animated.View>
 
           <Animated.View entering={FadeInDown.delay(350).duration(500)} style={styles.dividerRow}>
@@ -97,7 +104,7 @@ export default function LoginScreen() {
                 placeholder="Email"
                 placeholderTextColor={colors.textDim}
                 value={email}
-                onChangeText={setEmail}
+                onChangeText={(v) => { setEmail(v); setError(null); }}
                 autoCapitalize="none"
                 autoComplete="email"
                 keyboardType="email-address"
@@ -116,7 +123,7 @@ export default function LoginScreen() {
                 placeholder="Password"
                 placeholderTextColor={colors.textDim}
                 value={password}
-                onChangeText={setPassword}
+                onChangeText={(v) => { setPassword(v); setError(null); }}
                 secureTextEntry={!showPassword}
                 autoComplete="password"
               />
@@ -129,15 +136,21 @@ export default function LoginScreen() {
               </Pressable>
             </View>
 
+            {error && <Text style={styles.errorText}>{error}</Text>}
+
             <Pressable hitSlop={8} style={styles.forgot}>
               <Text style={styles.forgotText}>Forgot password?</Text>
             </Pressable>
 
             <Pressable
               onPress={onEmailLogin}
-              style={({ pressed }) => [styles.primaryBtn, { opacity: pressed ? 0.85 : 1 }]}
+              disabled={!canSubmit || loading}
+              style={({ pressed }) => [
+                styles.primaryBtn,
+                { opacity: !canSubmit || loading ? 0.5 : pressed ? 0.85 : 1 },
+              ]}
             >
-              <Text style={styles.primaryBtnText}>Sign in</Text>
+              <Text style={styles.primaryBtnText}>{loading ? 'Signing in…' : 'Sign in'}</Text>
             </Pressable>
           </Animated.View>
 
@@ -238,6 +251,11 @@ const styles = StyleSheet.create({
     flex: 1,
     color: colors.text,
     ...typography.body,
+  },
+  errorText: {
+    ...typography.caption,
+    color: colors.danger,
+    marginTop: spacing.xs,
   },
   forgot: {
     alignSelf: 'flex-end',

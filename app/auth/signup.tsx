@@ -14,35 +14,74 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 
-import { SocialButton } from '@/src/components/SocialButton';
+import { supabase } from '@/src/supabase/client';
 import { colors } from '@/src/theme/colors';
 import { radius, spacing, typography } from '@/src/theme/typography';
 import { haptics } from '@/src/utils/haptics';
 
 export default function SignupScreen() {
   const router = useRouter();
-  const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [agree, setAgree] = useState(false);
-  const [loadingProvider, setLoadingProvider] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [pendingConfirm, setPendingConfirm] = useState(false);
 
-  const stubAuth = (provider: string) => {
+  const canSubmit = email.trim().length > 0 && password.length >= 6 && agree && !loading;
+
+  const onEmailSignup = async () => {
+    if (!canSubmit) return;
     haptics.tap();
-    setLoadingProvider(provider);
-    setTimeout(() => {
-      setLoadingProvider(null);
-      router.replace('/auth/onboarding');
-    }, 600);
+    setLoading(true);
+    setError(null);
+
+    const { data, error: err } = await supabase.auth.signUp({
+      email: email.trim(),
+      password,
+    });
+    setLoading(false);
+
+    if (err) {
+      setError(err.message);
+      haptics.warning();
+      return;
+    }
+
+    // When email confirmation is enabled, session is null until the user clicks
+    // the confirmation link. Show a waiting state instead of routing.
+    if (!data.session) {
+      setPendingConfirm(true);
+      return;
+    }
+
+    haptics.success();
+    router.replace('/auth/onboarding');
   };
 
-  const onEmailSignup = () => {
-    haptics.tap();
-    router.replace('/(tabs)/home');
-  };
-
-  const canSubmit = name.trim().length > 0 && email.trim().length > 0 && password.length >= 6 && agree;
+  if (pendingConfirm) {
+    return (
+      <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
+        <View style={styles.center}>
+          <Ionicons name="mail-outline" size={52} color={colors.gold} />
+          <Text style={styles.confirmTitle}>Check your inbox</Text>
+          <Text style={styles.confirmBody}>
+            We sent a confirmation link to{' '}
+            <Text style={styles.confirmEmail}>{email.trim()}</Text>
+            {'. '}
+            Tap it, then come back and sign in.
+          </Text>
+          <Pressable
+            onPress={() => router.replace('/auth/login')}
+            style={({ pressed }) => [styles.primaryBtn, { opacity: pressed ? 0.8 : 1 }]}
+          >
+            <Text style={styles.primaryBtnText}>Go to sign in</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
@@ -66,47 +105,7 @@ export default function SignupScreen() {
             <Text style={styles.subtitle}>Claim your throne in under a minute</Text>
           </Animated.View>
 
-          <Animated.View entering={FadeInDown.delay(250).duration(500)} style={styles.providers}>
-            <SocialButton
-              provider="google"
-              onPress={() => stubAuth('google')}
-              loading={loadingProvider === 'google'}
-              disabled={loadingProvider !== null && loadingProvider !== 'google'}
-            />
-            <SocialButton
-              provider="facebook"
-              onPress={() => stubAuth('facebook')}
-              loading={loadingProvider === 'facebook'}
-              disabled={loadingProvider !== null && loadingProvider !== 'facebook'}
-            />
-            <SocialButton
-              provider="phone"
-              onPress={() => stubAuth('phone')}
-              loading={loadingProvider === 'phone'}
-              disabled={loadingProvider !== null && loadingProvider !== 'phone'}
-            />
-          </Animated.View>
-
-          <Animated.View entering={FadeInDown.delay(350).duration(500)} style={styles.dividerRow}>
-            <View style={styles.dividerLine} />
-            <Text style={styles.dividerText}>or sign up with email</Text>
-            <View style={styles.dividerLine} />
-          </Animated.View>
-
-          <Animated.View entering={FadeInDown.delay(450).duration(500)} style={styles.form}>
-            <View style={styles.inputWrap}>
-              <Ionicons name="person-outline" size={18} color={colors.textMuted} style={styles.inputIcon} />
-              <TextInput
-                style={styles.input}
-                placeholder="Username"
-                placeholderTextColor={colors.textDim}
-                value={name}
-                onChangeText={setName}
-                autoCapitalize="none"
-                autoComplete="username"
-              />
-            </View>
-
+          <Animated.View entering={FadeInDown.delay(250).duration(500)} style={styles.form}>
             <View style={styles.inputWrap}>
               <Ionicons name="mail-outline" size={18} color={colors.textMuted} style={styles.inputIcon} />
               <TextInput
@@ -114,7 +113,7 @@ export default function SignupScreen() {
                 placeholder="Email"
                 placeholderTextColor={colors.textDim}
                 value={email}
-                onChangeText={setEmail}
+                onChangeText={(v) => { setEmail(v); setError(null); }}
                 autoCapitalize="none"
                 autoComplete="email"
                 keyboardType="email-address"
@@ -133,7 +132,7 @@ export default function SignupScreen() {
                 placeholder="Password (min 6 characters)"
                 placeholderTextColor={colors.textDim}
                 value={password}
-                onChangeText={setPassword}
+                onChangeText={(v) => { setPassword(v); setError(null); }}
                 secureTextEntry={!showPassword}
                 autoComplete="password-new"
               />
@@ -145,6 +144,8 @@ export default function SignupScreen() {
                 />
               </Pressable>
             </View>
+
+            {error && <Text style={styles.errorText}>{error}</Text>}
 
             <Pressable
               onPress={() => setAgree((a) => !a)}
@@ -168,11 +169,13 @@ export default function SignupScreen() {
                 { opacity: !canSubmit ? 0.5 : pressed ? 0.85 : 1 },
               ]}
             >
-              <Text style={styles.primaryBtnText}>Create account</Text>
+              <Text style={styles.primaryBtnText}>
+                {loading ? 'Creating account…' : 'Create account'}
+              </Text>
             </Pressable>
           </Animated.View>
 
-          <Animated.View entering={FadeInDown.delay(550).duration(500)} style={styles.footer}>
+          <Animated.View entering={FadeInDown.delay(350).duration(500)} style={styles.footer}>
             <Text style={styles.footerText}>Already have an account? </Text>
             <Link href="/auth/login" replace asChild>
               <Pressable hitSlop={8}>
@@ -189,6 +192,28 @@ export default function SignupScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
   flex: { flex: 1 },
+  center: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.xl,
+    gap: spacing.lg,
+  },
+  confirmTitle: {
+    ...typography.h2,
+    color: colors.text,
+    textAlign: 'center',
+  },
+  confirmBody: {
+    ...typography.body,
+    color: colors.textMuted,
+    textAlign: 'center',
+    lineHeight: 22,
+  },
+  confirmEmail: {
+    color: colors.gold,
+    fontWeight: '600',
+  },
   scroll: {
     flexGrow: 1,
     paddingHorizontal: spacing.lg,
@@ -228,27 +253,6 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.textMuted,
   },
-  providers: {
-    gap: spacing.sm,
-    marginBottom: spacing.md,
-  },
-  dividerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginVertical: spacing.md,
-    gap: spacing.sm,
-  },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: colors.border,
-  },
-  dividerText: {
-    ...typography.caption,
-    color: colors.textDim,
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-  },
   form: {
     gap: spacing.sm,
   },
@@ -269,6 +273,11 @@ const styles = StyleSheet.create({
     flex: 1,
     color: colors.text,
     ...typography.body,
+  },
+  errorText: {
+    ...typography.caption,
+    color: colors.danger,
+    marginTop: spacing.xs,
   },
   agreeRow: {
     flexDirection: 'row',

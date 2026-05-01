@@ -34,15 +34,22 @@ export default function OnboardingScreen() {
   const [username, setUsername] = useState('');
   const [avatarId, setAvatarId] = useState<number | null>(null);
   const [colorId, setColorId] = useState<TokenColorId | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const usernameError = validateUsername(username);
   const usernameOk = isUsernameValid(username);
-  const canSubmit = usernameOk && avatarId !== null && colorId !== null;
+  const canSubmit = usernameOk && avatarId !== null && colorId !== null && !loading;
 
   const onContinue = async () => {
     if (!canSubmit || avatarId === null || colorId === null) return;
-    haptics.success();
+    haptics.tap();
+    setLoading(true);
+    setError(null);
+    // setProfile does a Supabase UPDATE — trigger already inserted the row.
     await setProfile({ username: username.trim(), avatarId, colorId });
+    setLoading(false);
+    haptics.success();
     router.replace('/(tabs)/home');
   };
 
@@ -83,7 +90,7 @@ export default function OnboardingScreen() {
                 placeholder="e.g. RoyalRoller"
                 placeholderTextColor={colors.textDim}
                 value={username}
-                onChangeText={setUsername}
+                onChangeText={(v) => { setUsername(v); setError(null); }}
                 autoCapitalize="none"
                 maxLength={USERNAME_MAX}
               />
@@ -102,10 +109,7 @@ export default function OnboardingScreen() {
                 return (
                   <Pressable
                     key={a.id}
-                    onPress={() => {
-                      haptics.tap();
-                      setAvatarId(a.id);
-                    }}
+                    onPress={() => { haptics.tap(); setAvatarId(a.id); }}
                     style={[styles.avatarTile, selected && styles.avatarTileSelected]}
                   >
                     <View style={[styles.avatarCircle, { backgroundColor: a.bg }]}>
@@ -130,10 +134,7 @@ export default function OnboardingScreen() {
                 return (
                   <Pressable
                     key={c.id}
-                    onPress={() => {
-                      haptics.tap();
-                      setColorId(c.id);
-                    }}
+                    onPress={() => { haptics.tap(); setColorId(c.id); }}
                     style={styles.colorTile}
                   >
                     <View
@@ -153,6 +154,10 @@ export default function OnboardingScreen() {
               })}
             </View>
           </Animated.View>
+
+          {error && (
+            <Text style={styles.globalError}>{error}</Text>
+          )}
         </ScrollView>
 
         <View style={styles.footer}>
@@ -164,8 +169,10 @@ export default function OnboardingScreen() {
               { opacity: !canSubmit ? 0.4 : pressed ? 0.85 : 1 },
             ]}
           >
-            <Text style={styles.primaryBtnText}>Enter the kingdom</Text>
-            <Ionicons name="arrow-forward" size={18} color={colors.bg} />
+            <Text style={styles.primaryBtnText}>
+              {loading ? 'Saving…' : 'Enter the kingdom'}
+            </Text>
+            {!loading && <Ionicons name="arrow-forward" size={18} color={colors.bg} />}
           </Pressable>
           <Text style={styles.starter}>You'll receive 1,000 starter coins</Text>
         </View>
@@ -231,6 +238,12 @@ const styles = StyleSheet.create({
     marginLeft: spacing.xs,
   },
   hintError: { color: colors.danger },
+  globalError: {
+    ...typography.caption,
+    color: colors.danger,
+    textAlign: 'center',
+    marginBottom: spacing.md,
+  },
   avatarGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
