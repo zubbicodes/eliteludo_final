@@ -47,11 +47,17 @@ export function makeInitialPlayer(
   return { color, name, isAI, avatarId, tokens };
 }
 
-export function makeInitialGameState(humanColor: Color = 'red', botCount = 3): GameState {
+export type HumanProfile = { name: string; avatarId: number };
+
+export function makeInitialGameState(
+  humanColor: Color = 'red',
+  botCount = 3,
+  human?: HumanProfile,
+): GameState {
   const seats = COLORS.slice(0, 1 + botCount);
   const players: Player[] = seats.map((color, i) =>
     color === humanColor
-      ? makeInitialPlayer(color, 'You', false, i)
+      ? makeInitialPlayer(color, human?.name ?? 'You', false, human?.avatarId ?? i)
       : makeInitialPlayer(color, `Bot ${color.charAt(0).toUpperCase() + color.slice(1)}`, true, i),
   );
   const startIdx = players.findIndex((p) => p.color === humanColor);

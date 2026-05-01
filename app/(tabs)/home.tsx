@@ -58,7 +58,13 @@ export default function HomeScreen() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity style={styles.settingsBtn}>
+        <TouchableOpacity
+          style={styles.settingsBtn}
+          onPress={() => {
+            haptics.tap();
+            router.push('/settings');
+          }}
+        >
           <Ionicons name="settings-outline" size={24} color={colors.gold} />
         </TouchableOpacity>
         <View style={styles.coinsContainer}>

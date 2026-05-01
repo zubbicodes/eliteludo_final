@@ -1,18 +1,51 @@
 import { router } from 'expo-router';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { useEffect } from 'react';
+import { StyleSheet, Text, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import Animated, {
+  Easing,
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withTiming,
+} from 'react-native-reanimated';
 
+import { useProfileStore } from '@/src/stores/profile';
+import { useSettingsStore } from '@/src/stores/settings';
 import { colors } from '@/src/theme/colors';
-import { radius, spacing, typography } from '@/src/theme/typography';
+import { spacing, typography } from '@/src/theme/typography';
 
 export default function SplashScreen() {
+  const glow = useSharedValue(0.4);
+  const hydrateProfile = useProfileStore((s) => s.hydrate);
+  const hydrateSettings = useSettingsStore((s) => s.hydrate);
+
   useEffect(() => {
+    // Warm up persisted stores while the splash is on screen.
+    hydrateProfile();
+    hydrateSettings();
+
+    glow.value = withRepeat(
+      withTiming(1, { duration: 900, easing: Easing.inOut(Easing.quad) }),
+      -1,
+      true,
+    );
+
     const timer = setTimeout(() => {
-      router.replace('/(tabs)/home');
-    }, 1500);
+      router.replace('/auth/login');
+    }, 1800);
     return () => clearTimeout(timer);
-  }, []);
+  }, [glow, hydrateProfile, hydrateSettings]);
+
+  const dot0 = useAnimatedStyle(() => ({
+    opacity: 0.3 + 0.7 * Math.max(0, Math.sin(glow.value * Math.PI)),
+  }));
+  const dot1 = useAnimatedStyle(() => ({
+    opacity: 0.3 + 0.7 * Math.max(0, Math.sin((glow.value + 0.33) * Math.PI)),
+  }));
+  const dot2 = useAnimatedStyle(() => ({
+    opacity: 0.3 + 0.7 * Math.max(0, Math.sin((glow.value + 0.66) * Math.PI)),
+  }));
 
   return (
     <SafeAreaView style={styles.root}>
@@ -21,6 +54,12 @@ export default function SplashScreen() {
         <View style={styles.divider} />
         <Text style={styles.brand}>LUDO</Text>
         <Text style={styles.tagline}>ROLL LIKE ROYALTY</Text>
+      </View>
+
+      <View style={styles.loaderRow}>
+        <Animated.View style={[styles.dot, dot0]} />
+        <Animated.View style={[styles.dot, dot1]} />
+        <Animated.View style={[styles.dot, dot2]} />
       </View>
     </SafeAreaView>
   );
@@ -59,5 +98,16 @@ const styles = StyleSheet.create({
     ...typography.tagline,
     color: colors.textMuted,
     marginTop: spacing.lg,
+  },
+  loaderRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginBottom: spacing.lg,
+  },
+  dot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.gold,
   },
 });
