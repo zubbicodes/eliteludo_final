@@ -1,8 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
   Alert,
+  ImageBackground,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -10,17 +12,19 @@ import {
   Text,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { Images } from '@/src/assets';
 import { useProfileStore } from '@/src/stores/profile';
 import { useSettingsStore, type Language } from '@/src/stores/settings';
 import { supabase } from '@/src/supabase/client';
 import { colors } from '@/src/theme/colors';
-import { radius, spacing, typography } from '@/src/theme/typography';
 import { haptics } from '@/src/utils/haptics';
 
 export default function SettingsScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
 
   const hydrate = useSettingsStore((s) => s.hydrate);
   const set = useSettingsStore((s) => s.set);
@@ -28,21 +32,16 @@ export default function SettingsScreen() {
   const musicEnabled = useSettingsStore((s) => s.musicEnabled);
   const vibrationEnabled = useSettingsStore((s) => s.vibrationEnabled);
   const language = useSettingsStore((s) => s.language);
-
   const clearProfile = useProfileStore((s) => s.clear);
-
   const [signingOut, setSigningOut] = useState(false);
 
-  useEffect(() => {
-    hydrate();
-  }, [hydrate]);
+  useEffect(() => { hydrate(); }, [hydrate]);
 
   const onLogout = () => {
     Alert.alert('Sign out', 'You will need to sign in again to play.', [
       { text: 'Cancel', style: 'cancel' },
       {
-        text: 'Sign out',
-        style: 'destructive',
+        text: 'Sign out', style: 'destructive',
         onPress: async () => {
           setSigningOut(true);
           haptics.warning();
@@ -61,150 +60,183 @@ export default function SettingsScreen() {
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => {
-            // TODO: wire to Supabase auth.users delete via Edge Function in phase 3.
-            Alert.alert('Not yet', 'Account deletion lands when auth wiring goes in.');
-          },
+          text: 'Delete', style: 'destructive',
+          onPress: () => Alert.alert('Not yet', 'Account deletion lands in a future update.'),
         },
       ],
     );
   };
 
   return (
-    <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
-      <View style={styles.topbar}>
-        <Pressable onPress={() => router.back()} hitSlop={12} style={styles.iconBtn}>
-          <Ionicons name="chevron-back" size={26} color={colors.gold} />
+    <View style={styles.root}>
+      <ImageBackground source={Images.bgHome} style={StyleSheet.absoluteFill} resizeMode="cover">
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(4,3,1,0.92)' }]} />
+      </ImageBackground>
+
+      {/* Header */}
+      <Animated.View
+        entering={FadeIn.duration(400)}
+        style={[styles.header, { paddingTop: insets.top + 12 }]}
+      >
+        <Pressable onPress={() => router.back()} style={styles.backBtn} hitSlop={8}>
+          <Ionicons name="chevron-back" size={20} color={colors.gold} />
         </Pressable>
-        <Text style={styles.topbarTitle}>Settings</Text>
-        <View style={styles.iconBtn} />
-      </View>
+        <Text style={styles.headerTitle}>SETTINGS</Text>
+        <View style={{ width: 38 }} />
+      </Animated.View>
 
-      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-        <SectionHeader label="Audio" />
-        <SwitchRow
-          icon="volume-high-outline"
-          label="Sound effects"
-          value={soundEnabled}
-          onValueChange={(v) => {
-            haptics.tap();
-            set({ soundEnabled: v });
-          }}
-        />
-        <SwitchRow
-          icon="musical-notes-outline"
-          label="Music"
-          value={musicEnabled}
-          onValueChange={(v) => {
-            haptics.tap();
-            set({ musicEnabled: v });
-          }}
-        />
-        <SwitchRow
-          icon="phone-portrait-outline"
-          label="Vibration"
-          value={vibrationEnabled}
-          onValueChange={(v) => {
-            // tap before flipping, so the user feels the last vibration when turning off
-            haptics.tap();
-            set({ vibrationEnabled: v });
-          }}
-        />
+      <ScrollView
+        contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + 32 }]}
+        showsVerticalScrollIndicator={false}
+      >
+        <Animated.View entering={FadeInDown.delay(100).duration(400)}>
+          <SectionLabel label="Audio" />
+          <View style={styles.card}>
+            <SwitchRow
+              icon="volume-high-outline"
+              label="Sound Effects"
+              value={soundEnabled}
+              onValueChange={(v) => { haptics.tap(); set({ soundEnabled: v }); }}
+              last={false}
+            />
+            <SwitchRow
+              icon="musical-notes-outline"
+              label="Music"
+              value={musicEnabled}
+              onValueChange={(v) => { haptics.tap(); set({ musicEnabled: v }); }}
+              last={false}
+            />
+            <SwitchRow
+              icon="phone-portrait-outline"
+              label="Vibration"
+              value={vibrationEnabled}
+              onValueChange={(v) => { haptics.tap(); set({ vibrationEnabled: v }); }}
+              last
+            />
+          </View>
+        </Animated.View>
 
-        <SectionHeader label="Language" />
-        <LanguageRow value={language} onChange={(l) => set({ language: l })} />
+        <Animated.View entering={FadeInDown.delay(180).duration(400)}>
+          <SectionLabel label="Language" />
+          <View style={styles.card}>
+            <LanguageRow value={language} onChange={(l) => set({ language: l })} />
+          </View>
+        </Animated.View>
 
-        <SectionHeader label="Legal" />
-        <LinkRow icon="document-text-outline" label="Privacy Policy" onPress={() => {}} />
-        <LinkRow icon="reader-outline" label="Terms of Service" onPress={() => {}} />
+        <Animated.View entering={FadeInDown.delay(260).duration(400)}>
+          <SectionLabel label="Legal" />
+          <View style={styles.card}>
+            <LinkRow icon="document-text-outline" label="Privacy Policy" onPress={() => {}} last={false} />
+            <LinkRow icon="reader-outline" label="Terms of Service" onPress={() => {}} last />
+          </View>
+        </Animated.View>
 
-        <SectionHeader label="Support" />
-        <LinkRow icon="help-circle-outline" label="Help & Support" onPress={() => {}} />
-        <LinkRow icon="information-circle-outline" label="About" onPress={() => {}} />
+        <Animated.View entering={FadeInDown.delay(340).duration(400)}>
+          <SectionLabel label="Support" />
+          <View style={styles.card}>
+            <LinkRow icon="help-circle-outline" label="Help & Support" onPress={() => {}} last={false} />
+            <LinkRow icon="information-circle-outline" label="About" onPress={() => {}} last />
+          </View>
+        </Animated.View>
 
-        <SectionHeader label="Account" />
-        <Pressable
-          onPress={onLogout}
-          disabled={signingOut}
-          style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
-        >
-          <Ionicons name="log-out-outline" size={22} color={colors.gold} />
-          <Text style={[styles.rowLabel, { color: colors.gold }]}>Sign out</Text>
-        </Pressable>
-        <Pressable
-          onPress={onDelete}
-          style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
-        >
-          <Ionicons name="trash-outline" size={22} color={colors.danger} />
-          <Text style={[styles.rowLabel, { color: colors.danger }]}>Delete account</Text>
-        </Pressable>
+        <Animated.View entering={FadeInDown.delay(420).duration(400)}>
+          <SectionLabel label="Account" />
+          <View style={styles.card}>
+            <Pressable
+              onPress={onLogout}
+              disabled={signingOut}
+              style={({ pressed }) => [styles.row, pressed && { opacity: 0.7 }]}
+            >
+              <View style={[styles.iconBadge, { backgroundColor: 'rgba(212,175,55,0.12)' }]}>
+                <Ionicons name="log-out-outline" size={18} color={colors.gold} />
+              </View>
+              <Text style={[styles.rowLabel, { color: colors.gold }]}>Sign out</Text>
+              <Ionicons name="chevron-forward" size={16} color={colors.goldDark} />
+            </Pressable>
+            <View style={styles.rowDivider} />
+            <Pressable
+              onPress={onDelete}
+              style={({ pressed }) => [styles.row, pressed && { opacity: 0.7 }]}
+            >
+              <View style={[styles.iconBadge, { backgroundColor: 'rgba(226,87,76,0.12)' }]}>
+                <Ionicons name="trash-outline" size={18} color={colors.danger} />
+              </View>
+              <Text style={[styles.rowLabel, { color: colors.danger }]}>Delete account</Text>
+              <Ionicons name="chevron-forward" size={16} color={colors.danger} />
+            </Pressable>
+          </View>
+        </Animated.View>
 
-        <Text style={styles.version}>Elite Ludo · v0.1.0</Text>
+        <Text style={styles.version}>Elite Ludo · 2026 Edition</Text>
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 }
 
-function SectionHeader({ label }: { label: string }) {
-  return <Text style={styles.sectionHeader}>{label.toUpperCase()}</Text>;
+function SectionLabel({ label }: { label: string }) {
+  return (
+    <Text style={styles.sectionLabel}>{label.toUpperCase()}</Text>
+  );
 }
 
 function SwitchRow({
-  icon,
-  label,
-  value,
-  onValueChange,
+  icon, label, value, onValueChange, last,
 }: {
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
   value: boolean;
   onValueChange: (v: boolean) => void;
+  last: boolean;
 }) {
   return (
-    <View style={styles.row}>
-      <Ionicons name={icon} size={22} color={colors.gold} />
-      <Text style={styles.rowLabel}>{label}</Text>
-      <Switch
-        value={value}
-        onValueChange={onValueChange}
-        trackColor={{ false: '#3a3a3a', true: colors.goldDark }}
-        thumbColor={value ? colors.gold : '#cccccc'}
-        ios_backgroundColor="#3a3a3a"
-      />
-    </View>
+    <>
+      <View style={styles.row}>
+        <View style={[styles.iconBadge, { backgroundColor: 'rgba(212,175,55,0.1)' }]}>
+          <Ionicons name={icon} size={18} color={colors.gold} />
+        </View>
+        <Text style={styles.rowLabel}>{label}</Text>
+        <Switch
+          value={value}
+          onValueChange={onValueChange}
+          trackColor={{ false: 'rgba(255,255,255,0.08)', true: colors.goldDark }}
+          thumbColor={value ? colors.gold : 'rgba(255,255,255,0.4)'}
+          ios_backgroundColor="rgba(255,255,255,0.08)"
+        />
+      </View>
+      {!last && <View style={styles.rowDivider} />}
+    </>
   );
 }
 
 function LinkRow({
-  icon,
-  label,
-  onPress,
+  icon, label, onPress, last,
 }: {
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
   onPress: () => void;
+  last: boolean;
 }) {
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}>
-      <Ionicons name={icon} size={22} color={colors.gold} />
-      <Text style={styles.rowLabel}>{label}</Text>
-      <Ionicons name="chevron-forward" size={18} color={colors.gray} />
-    </Pressable>
+    <>
+      <Pressable
+        onPress={onPress}
+        style={({ pressed }) => [styles.row, pressed && { opacity: 0.7 }]}
+      >
+        <View style={[styles.iconBadge, { backgroundColor: 'rgba(212,175,55,0.1)' }]}>
+          <Ionicons name={icon} size={18} color={colors.gold} />
+        </View>
+        <Text style={styles.rowLabel}>{label}</Text>
+        <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.25)" />
+      </Pressable>
+      {!last && <View style={styles.rowDivider} />}
+    </>
   );
 }
 
-function LanguageRow({
-  value,
-  onChange,
-}: {
-  value: Language;
-  onChange: (l: Language) => void;
-}) {
-  const options: { id: Language; label: string }[] = [
-    { id: 'en', label: 'English' },
-    { id: 'ur', label: 'اردو' },
+function LanguageRow({ value, onChange }: { value: Language; onChange: (l: Language) => void }) {
+  const options: { id: Language; label: string; flag: string }[] = [
+    { id: 'en', label: 'English', flag: '🇬🇧' },
+    { id: 'ur', label: 'اردو', flag: '🇵🇰' },
   ];
   return (
     <View style={styles.langRow}>
@@ -213,12 +245,16 @@ function LanguageRow({
         return (
           <Pressable
             key={o.id}
-            onPress={() => {
-              haptics.tap();
-              onChange(o.id);
-            }}
+            onPress={() => { haptics.tap(); onChange(o.id); }}
             style={[styles.langChip, selected && styles.langChipSelected]}
           >
+            {selected && (
+              <LinearGradient
+                colors={['rgba(212,175,55,0.15)', 'rgba(212,175,55,0.05)']}
+                style={StyleSheet.absoluteFill}
+              />
+            )}
+            <Text style={styles.langFlag}>{o.flag}</Text>
             <Text style={[styles.langText, selected && styles.langTextSelected]}>{o.label}</Text>
           </Pressable>
         );
@@ -228,77 +264,124 @@ function LanguageRow({
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colors.bg },
-  topbar: {
+  root: { flex: 1, backgroundColor: '#040301' },
+
+  header: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+    paddingHorizontal: 16,
+    paddingBottom: 8,
     borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    borderBottomColor: 'rgba(212,175,55,0.12)',
   },
-  iconBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  topbarTitle: { ...typography.h3, color: colors.text },
+  backBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    borderWidth: 1,
+    borderColor: 'rgba(212,175,55,0.3)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerTitle: {
+    flex: 1,
+    textAlign: 'center',
+    color: colors.gold,
+    fontSize: 14,
+    fontWeight: '800',
+    letterSpacing: 4,
+    textShadowColor: 'rgba(212,175,55,0.5)',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 10,
+  },
+
   scroll: {
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.md,
-    paddingBottom: spacing.xxl,
+    paddingHorizontal: 16,
+    paddingTop: 8,
   },
-  sectionHeader: {
-    ...typography.caption,
-    color: colors.textDim,
-    letterSpacing: 2,
-    fontWeight: '600',
-    marginTop: spacing.lg,
-    marginBottom: spacing.sm,
-    marginLeft: spacing.xs,
+
+  sectionLabel: {
+    color: 'rgba(212,175,55,0.45)',
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 2.5,
+    marginTop: 20,
+    marginBottom: 8,
+    marginLeft: 4,
   },
+
+  card: {
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(212,175,55,0.12)',
+    overflow: 'hidden',
+  },
+
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.card,
-    borderRadius: radius.md,
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.md,
-    marginBottom: spacing.xs,
-    gap: spacing.md,
+    paddingVertical: 13,
+    paddingHorizontal: 14,
+    gap: 12,
   },
-  rowPressed: { opacity: 0.7 },
+  rowDivider: {
+    height: 1,
+    marginHorizontal: 14,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  iconBadge: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   rowLabel: {
     flex: 1,
     color: colors.text,
-    ...typography.body,
+    fontSize: 15,
+    fontWeight: '500',
   },
+
   langRow: {
     flexDirection: 'row',
-    gap: spacing.sm,
+    gap: 0,
+    padding: 8,
+    gap: 8,
   },
   langChip: {
     flex: 1,
-    paddingVertical: spacing.md,
-    borderRadius: radius.md,
-    backgroundColor: colors.card,
-    borderWidth: 1,
-    borderColor: colors.border,
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    overflow: 'hidden',
   },
   langChipSelected: {
-    borderColor: colors.gold,
-    backgroundColor: 'rgba(212, 175, 55, 0.1)',
+    borderColor: colors.goldDark,
   },
+  langFlag: { fontSize: 18 },
   langText: {
-    ...typography.body,
+    fontSize: 14,
+    fontWeight: '500',
     color: colors.textMuted,
   },
   langTextSelected: {
     color: colors.gold,
     fontWeight: '700',
   },
+
   version: {
-    ...typography.caption,
-    color: colors.textDim,
+    color: 'rgba(255,255,255,0.12)',
+    fontSize: 11,
+    letterSpacing: 1.5,
     textAlign: 'center',
-    marginTop: spacing.xl,
+    marginTop: 28,
   },
 });
