@@ -10,7 +10,7 @@
 //    current move so each die point reads as one discrete hop.
 
 import { useEffect } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { Image, Pressable, StyleSheet, View, type ImageSourcePropType } from 'react-native';
 import Animated, {
   Easing,
   useAnimatedStyle,
@@ -21,13 +21,14 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import type { Color } from '@/src/game/types';
+import { Images } from '@/src/assets';
 import { colors } from '@/src/theme/colors';
 
-const PLAYER_HEX: Record<Color, string> = {
-  red: colors.red,
-  green: colors.green,
-  yellow: colors.yellow,
-  blue: colors.blue,
+const TOKEN_IMAGE: Record<Color, ImageSourcePropType> = {
+  red: Images.tokenRed,
+  green: Images.tokenGreen,
+  yellow: Images.tokenYellow,
+  blue: Images.tokenBlue,
 };
 
 type HopStop = { cx: number; cy: number };
@@ -127,14 +128,18 @@ export function Token({
         />
         <View
           style={[
-            styles.dot,
+            styles.tokenShadow,
             {
-              width: size * 0.7,
-              height: size * 0.7,
-              borderRadius: (size * 0.7) / 2,
-              backgroundColor: PLAYER_HEX[color],
+              width: size * 0.68,
+              height: size * 0.16,
+              borderRadius: size * 0.08,
             },
           ]}
+        />
+        <Image
+          source={TOKEN_IMAGE[color]}
+          resizeMode="contain"
+          style={{ width: size * 1.18, height: size * 1.18 }}
         />
       </Pressable>
     </Animated.View>
@@ -155,8 +160,9 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: colors.gold,
   },
-  dot: {
-    borderWidth: 1.5,
-    borderColor: 'rgba(0,0,0,0.4)',
+  tokenShadow: {
+    position: 'absolute',
+    bottom: 1,
+    backgroundColor: 'rgba(0,0,0,0.42)',
   },
 });

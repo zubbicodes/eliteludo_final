@@ -7,6 +7,9 @@ import { StyleSheet, View } from 'react-native';
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
+  withDelay,
+  withRepeat,
+  withSequence,
   withTiming,
 } from 'react-native-reanimated';
 
@@ -27,6 +30,17 @@ const FACES: Record<number, [boolean, boolean, boolean, boolean, boolean, boolea
   5: [true, false, true, false, true, false, true, false, true],
   6: [true, false, true, true, false, true, true, false, true],
 };
+
+const SPARKLES = [
+  { x: -0.08, y: 0.12, size: 0.13 },
+  { x: 0.18, y: -0.10, size: 0.09 },
+  { x: 0.66, y: -0.08, size: 0.12 },
+  { x: 0.94, y: 0.22, size: 0.08 },
+  { x: 0.84, y: 0.76, size: 0.11 },
+  { x: 0.52, y: 0.98, size: 0.08 },
+  { x: 0.12, y: 0.84, size: 0.10 },
+  { x: -0.10, y: 0.52, size: 0.07 },
+];
 
 export function Dice({ size, value, rolling }: Props) {
   const rot = useSharedValue(0);
@@ -56,6 +70,18 @@ export function Dice({ size, value, rolling }: Props) {
         containerStyle,
       ]}
     >
+      {SPARKLES.map((sparkle, index) => (
+        <DiceSparkle
+          key={index}
+          active={rolling || value !== null}
+          index={index}
+          rolling={rolling}
+          size={size}
+          x={sparkle.x}
+          y={sparkle.y}
+          sparkleSize={sparkle.size}
+        />
+      ))}
       {dots ? (
         <View style={styles.grid}>
           {dots.map((on, i) => (
@@ -82,16 +108,88 @@ export function Dice({ size, value, rolling }: Props) {
   );
 }
 
+function DiceSparkle({
+  active,
+  index,
+  rolling,
+  size,
+  x,
+  y,
+  sparkleSize,
+}: {
+  active: boolean;
+  index: number;
+  rolling: boolean;
+  size: number;
+  x: number;
+  y: number;
+  sparkleSize: number;
+}) {
+  const twinkle = useSharedValue(0);
+
+  useEffect(() => {
+    if (!active) {
+      twinkle.value = withTiming(0, { duration: 160 });
+      return;
+    }
+
+    const delay = index * (rolling ? 55 : 160);
+    const upMs = rolling ? 130 : 520;
+    const downMs = rolling ? 260 : 900;
+    twinkle.value = withDelay(
+      delay,
+      withRepeat(
+        withSequence(
+          withTiming(1, { duration: upMs }),
+          withTiming(0.15, { duration: downMs }),
+        ),
+        -1,
+        true,
+      ),
+    );
+  }, [active, index, rolling, twinkle]);
+
+  const sparkleStyle = useAnimatedStyle(() => ({
+    opacity: twinkle.value,
+    transform: [
+      { rotate: '45deg' },
+      { scale: 0.45 + twinkle.value * (rolling ? 0.95 : 0.55) },
+    ],
+  }));
+
+  const pixelSize = size * sparkleSize;
+
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={[
+        styles.sparkle,
+        {
+          left: size * x,
+          top: size * y,
+          width: pixelSize,
+          height: pixelSize,
+          borderRadius: pixelSize * 0.18,
+        },
+        sparkleStyle,
+      ]}
+    />
+  );
+}
+
 const styles = StyleSheet.create({
   face: {
-    backgroundColor: colors.text,
+    backgroundColor: '#F4D64C',
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#5B2A16',
     shadowColor: colors.gold,
-    shadowOpacity: 0.35,
+    shadowOpacity: 0.55,
     shadowRadius: 12,
     shadowOffset: { width: 0, height: 0 },
     elevation: 6,
+    overflow: 'visible',
   },
   grid: {
     flex: 1,
@@ -106,6 +204,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   dot: {
-    backgroundColor: colors.bg,
+    backgroundColor: '#130703',
+  },
+  sparkle: {
+    position: 'absolute',
+    backgroundColor: '#FFF7C8',
+    borderWidth: 1,
+    borderColor: colors.gold,
+    shadowColor: colors.gold,
+    shadowOpacity: 0.95,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 9,
+    zIndex: 4,
   },
 });

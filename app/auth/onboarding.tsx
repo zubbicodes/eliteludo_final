@@ -35,7 +35,7 @@ export default function OnboardingScreen() {
   const setProfile = useProfileStore((s) => s.setProfile);
 
   const [username, setUsername] = useState('');
-  const [avatarId, setAvatarId] useState<number | null>(null);
+  const [avatarId, setAvatarId] = useState<number | null>(null);
   const [colorId, setColorId] = useState<TokenColorId | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -194,7 +194,7 @@ export default function OnboardingScreen() {
               {!loading && <Ionicons name="arrow-forward" size={18} color={colors.bg} />}
             </LinearGradient>
           </Pressable>
-          <Text style={styles.starter}>You'll receive 1,000 starter coins</Text>
+          <Text style={styles.starter}>You&apos;ll receive 1,000 starter coins</Text>
         </View>
       </KeyboardAvoidingView>
     </View>

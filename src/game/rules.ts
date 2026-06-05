@@ -54,7 +54,10 @@ export function makeInitialGameState(
   botCount = 3,
   human?: HumanProfile,
 ): GameState {
-  const seats = COLORS.slice(0, 1 + botCount);
+  const seats = [
+    humanColor,
+    ...COLORS.filter((color) => color !== humanColor).slice(0, botCount),
+  ];
   const players: Player[] = seats.map((color, i) =>
     color === humanColor
       ? makeInitialPlayer(color, human?.name ?? 'You', false, human?.avatarId ?? i)
@@ -165,9 +168,9 @@ export function getValidMoves(state: GameState, color: Color): MoveOption[] {
     for (const token of ownTokens) {
       const to = tryMove(token, die);
       if (!to) continue;
-      const blockedByOwn = ownTokens.some(
-        (t) => t.id !== token.id && samePlace(t.location, to),
-      );
+      const blockedByOwn =
+        to.kind !== 'finished' &&
+        ownTokens.some((t) => t.id !== token.id && samePlace(t.location, to));
       if (blockedByOwn) continue;
       const captures: TokenId[] = [];
       if (to.kind === 'track' && !SAFE_TRACK_INDICES.has(to.index)) {
@@ -240,6 +243,8 @@ export function applyMove(state: GameState, move: MoveOption): GameState {
  *  - empty pool → advance turn
  */
 export function finishMove(state: GameState): GameState {
+  const move = state.lastMove;
+  const earnedBonusRoll = !!move && (move.captures.length > 0 || move.to.kind === 'finished');
   const cleared = { ...state, lastMove: null };
   if (cleared.winnerColor) return { ...cleared, status: 'finished' };
   if (cleared.dicePool.length > 0) {
@@ -247,8 +252,10 @@ export function finishMove(state: GameState): GameState {
     const moves = getValidMoves(cleared, color);
     if (moves.length > 0) return { ...cleared, status: 'awaiting_move' };
     // dead pool — skip remaining
+    if (earnedBonusRoll) return { ...cleared, dicePool: [], status: 'awaiting_roll' };
     return advanceToNextPlayer({ ...cleared, dicePool: [] });
   }
+  if (earnedBonusRoll) return { ...cleared, status: 'awaiting_roll' };
   return advanceToNextPlayer(cleared);
 }
 

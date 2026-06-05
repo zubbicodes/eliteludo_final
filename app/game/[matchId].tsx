@@ -1,4 +1,4 @@
-// Game screen — solo vs-AI and 1v1 multiplayer.
+// Game screen - solo vs-AI and 1v1 multiplayer.
 // Solo path (matchId starts with "solo-"): fully client-side, no server calls.
 // Multiplayer path: dice via roll-dice Edge Function, board sync via Realtime.
 //
@@ -8,12 +8,14 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ImageBackground,
   Pressable,
   StyleSheet,
   Text,
   useWindowDimensions,
   View,
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { DiceTray } from '@/src/components/DiceTray';
@@ -22,7 +24,9 @@ import { TokenDicePicker } from '@/src/components/TokenDicePicker';
 import { BOARD_SIZE, cellForToken } from '@/src/game/board';
 import { pathCellsForMove } from '@/src/game/rules';
 import type { Color, MatchPlayer, Player, TokenId } from '@/src/game/types';
+import { Images } from '@/src/assets';
 import { supabase } from '@/src/supabase/client';
+import { getSupabaseErrorMessage } from '@/src/supabase/errors';
 import {
   getMatch,
   pushBoardState,
@@ -52,8 +56,9 @@ const MIN_MOVE_MS = 220;
 const CAPTURE_TAIL_MS = 260;
 
 export default function GameScreen() {
-  const { matchId } = useLocalSearchParams<{ matchId: string }>();
+  const { matchId, mode } = useLocalSearchParams<{ matchId: string; mode?: string }>();
   const { width } = useWindowDimensions();
+  const gameMode = mode === '4p' ? '4p' : '2p';
 
   // Solo = client-only path; multiplayer = server dice + Realtime sync
   const isSolo = !matchId || matchId.startsWith('solo-');
@@ -69,6 +74,7 @@ export default function GameScreen() {
 
   const [pickerForToken, setPickerForToken] = useState<TokenId | null>(null);
   const [bursts, setBursts] = useState<Burst[]>([]);
+  const [displayDiceValue, setDisplayDiceValue] = useState<number | null>(null);
 
   const profile = useProfileStore((s) => s.profile);
   const hydrateProfile = useProfileStore((s) => s.hydrate);
@@ -80,6 +86,7 @@ export default function GameScreen() {
   const myColorRef = useRef(myColor);
   const mpPlayersRef = useRef<MatchPlayer[] | null>(null);
   const prevPlayerIdxRef = useRef(-1);
+  const prevStatusRef = useRef(state.status);
 
   useEffect(() => { stateRef.current = state; }, [state]);
   useEffect(() => { myColorRef.current = myColor; }, [myColor]);
@@ -90,26 +97,29 @@ export default function GameScreen() {
 
   const boardSize = Math.min(width - spacing.md * 2, 380);
   const cellPx = boardSize / BOARD_SIZE;
-  const tokenSize = cellPx * 0.78;
+  const tokenSize = cellPx * 0.98;
 
-  // ── Effect: Solo init — new game when mount or profile settles. ──
+  // ── Effect: Solo init - new game when mount or profile settles. ──
   useEffect(() => {
     if (!isSolo) return;
     const humanColor = (profile?.colorId as Color | undefined) ?? 'red';
     const human = profile
       ? { name: profile.username, avatarId: profile.avatarId }
       : undefined;
-    newGame(humanColor, 3, human);
-  }, [isSolo, matchId, newGame, profile?.colorId, profile?.username, profile?.avatarId]);
+    newGame(humanColor, gameMode === '2p' ? 1 : 3, human);
+  }, [isSolo, matchId, gameMode, newGame, profile?.colorId, profile?.username, profile?.avatarId]);
 
-  // ── Effect: Multiplayer init — load from DB and subscribe to Realtime. ──
+  // ── Effect: Multiplayer init - load from DB and subscribe to Realtime. ──
   useEffect(() => {
     if (isSolo || !matchId) return;
 
     let unsubscribeRealtime: (() => void) | null = null;
 
     const init = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { data: { session } } = await supabase.auth.getSession().catch((error) => {
+        console.warn('[game] getSession failed:', getSupabaseErrorMessage(error));
+        return { data: { session: null } };
+      });
       if (!session) return;
 
       const match = await getMatch(matchId);
@@ -153,16 +163,17 @@ export default function GameScreen() {
     ? !!currentPlayer && !currentPlayer.isAI
     : !!currentPlayer && currentPlayer.color === myColor;
 
-  // ── Effect: dice tumble has played out — settle the value. ──
+  // ── Effect: dice tumble has played out - settle the value. ──
   // Solo: use local RNG after a fixed timeout.
   // Multiplayer: call roll-dice EF, wait for response, then settle.
   useEffect(() => {
     if (state.status !== 'rolling') return;
-    if (!isMyTurn) return; // opponent's roll — we'll get it via Realtime
+    if (!isSolo && !isMyTurn) return; // opponent's roll - we'll get it via Realtime
 
     if (isSolo) {
       const t = setTimeout(() => {
-        finishRoll();
+        const value = finishRoll();
+        setDisplayDiceValue(value);
         haptics.medium();
       }, ROLL_ANIM_MS);
       return () => clearTimeout(t);
@@ -176,23 +187,27 @@ export default function GameScreen() {
       const wait = Math.max(0, ROLL_ANIM_MS - (Date.now() - startAt));
       setTimeout(() => {
         if (cancelled) return;
-        finishRoll(result?.value);
+        const value = finishRoll(result?.value);
+        setDisplayDiceValue(value);
         haptics.medium();
       }, wait);
     });
     return () => { cancelled = true; };
   }, [state.status, isMyTurn, isSolo, matchId, finishRoll]);
 
-  // ── Effect: AI is awaiting_roll — schedule a roll (solo only). ──
+  // ── Effect: AI is awaiting_roll - schedule a roll (solo only). ──
   useEffect(() => {
     if (!isSolo) return;
     if (state.status !== 'awaiting_roll' || !currentPlayer?.isAI) return;
     if (state.winnerColor) return;
-    const t = setTimeout(() => beginRoll(), THINK_MS);
+    const t = setTimeout(() => {
+      setDisplayDiceValue(null);
+      beginRoll();
+    }, THINK_MS);
     return () => clearTimeout(t);
   }, [isSolo, state.status, currentPlayer, state.winnerColor, beginRoll]);
 
-  // ── Effect: AI is awaiting_move — schedule a pick (solo only). ──
+  // ── Effect: AI is awaiting_move - schedule a pick (solo only). ──
   useEffect(() => {
     if (!isSolo) return;
     if (state.status !== 'awaiting_move' || !currentPlayer?.isAI) return;
@@ -204,7 +219,7 @@ export default function GameScreen() {
     return () => clearTimeout(t);
   }, [isSolo, state, currentPlayer, selectMove]);
 
-  // ── Effect: token movement anim has played — settle into next status. ──
+  // ── Effect: token movement anim has played - settle into next status. ──
   useEffect(() => {
     if (state.status !== 'animating') return;
     const move = state.lastMove;
@@ -219,7 +234,7 @@ export default function GameScreen() {
     };
   }, [state.status, state.lastMove, finishMoveAnim]);
 
-  // ── Effect: winner → celebrate, then navigate to result. ──
+  // ── Effect: winner -> celebrate, then navigate to result. ──
   useEffect(() => {
     if (!state.winnerColor) return;
     const winColor = state.winnerColor;
@@ -247,7 +262,7 @@ export default function GameScreen() {
     return () => clearTimeout(t);
   }, [state.winnerColor, boardSize, isSolo, myColor]);
 
-  // ── Effect: capture → particle burst. ──
+  // ── Effect: capture -> particle burst. ──
   useEffect(() => {
     const move = state.lastMove;
     if (!move?.captures.length) return;
@@ -292,6 +307,9 @@ export default function GameScreen() {
 
   // ── Effect (multiplayer): push board state to DB when my turn ends. ──
   useEffect(() => {
+    const prevStatus = prevStatusRef.current;
+    prevStatusRef.current = state.status;
+
     if (isSolo || !matchId || !myColor) return;
     if (state.status !== 'awaiting_roll' && state.status !== 'finished') return;
 
@@ -299,8 +317,10 @@ export default function GameScreen() {
     const prev = prevPlayerIdxRef.current;
     prevPlayerIdxRef.current = state.currentPlayerIdx;
 
-    // Push only when my turn just ended (currentPlayerIdx moved away from me)
-    if (prev === myIdx && state.currentPlayerIdx !== myIdx) {
+    const earnedSamePlayerBonus = prevStatus === 'animating' && state.currentPlayerIdx === myIdx;
+
+    // Push when my turn ends, or when my move earned a bonus roll and turn stays with me.
+    if (prev === myIdx && (state.currentPlayerIdx !== myIdx || earnedSamePlayerBonus)) {
       const nextColor = state.players[state.currentPlayerIdx].color;
       const nextEntry = mpPlayersRef.current?.find((p) => p.color === nextColor);
       pushBoardState(matchId, state, nextEntry?.user_id ?? null);
@@ -312,6 +332,7 @@ export default function GameScreen() {
   function onHumanRoll() {
     if (!isMyTurn || state.status !== 'awaiting_roll') return;
     haptics.tap();
+    setDisplayDiceValue(null);
     beginRoll();
   }
 
@@ -388,6 +409,11 @@ export default function GameScreen() {
   })();
 
   const byColor = new Map<Color, Player>(state.players.map((p) => [p.color, p]));
+  const isTwoPlayerGame = state.players.length <= 2;
+  const topLeft = isTwoPlayerGame ? state.players[0] : byColor.get('red');
+  const topRight = isTwoPlayerGame ? state.players[1] : byColor.get('green');
+  const bottomLeft = isTwoPlayerGame ? undefined : byColor.get('blue');
+  const bottomRight = isTwoPlayerGame ? undefined : byColor.get('yellow');
   const rollLabel = state.dicePool.length > 0 ? 'ROLL AGAIN' : 'ROLL';
   const hint = makeHint(state, isMyTurn, currentPlayer);
 
@@ -395,9 +421,13 @@ export default function GameScreen() {
 
   return (
     <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
+      <ImageBackground source={Images.bgHome} style={StyleSheet.absoluteFill} resizeMode="cover">
+        <View style={styles.tableOverlay} />
+      </ImageBackground>
+
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={12}>
-          <Text style={styles.back}>← Exit</Text>
+        <Pressable onPress={() => router.back()} hitSlop={12} style={styles.exitBtn}>
+          <Text style={styles.back}>EXIT</Text>
         </Pressable>
         <View style={styles.turnBadge}>
           <View
@@ -410,9 +440,18 @@ export default function GameScreen() {
         <Text style={styles.matchId}>#{(matchId ?? 'local').slice(-6)}</Text>
       </View>
 
+      <LinearGradient
+        colors={['rgba(212,175,55,0.22)', 'rgba(212,175,55,0.03)', 'rgba(212,175,55,0.22)']}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 0 }}
+        style={styles.titlePlaque}
+      >
+        <Text style={styles.titleText}>ELITE LUDO</Text>
+      </LinearGradient>
+
       <ProfileRow
-        left={byColor.get('red')}
-        right={byColor.get('green')}
+        left={topLeft}
+        right={topRight}
         currentColor={currentPlayer.color}
         lastRollByColor={state.lastRollByColor}
       />
@@ -460,16 +499,19 @@ export default function GameScreen() {
         </View>
       </View>
 
-      <ProfileRow
-        left={byColor.get('blue')}
-        right={byColor.get('yellow')}
-        currentColor={currentPlayer.color}
-        lastRollByColor={state.lastRollByColor}
-      />
+      {(bottomLeft || bottomRight) && (
+        <ProfileRow
+          left={bottomLeft}
+          right={bottomRight}
+          currentColor={currentPlayer.color}
+          lastRollByColor={state.lastRollByColor}
+        />
+      )}
 
       <DiceTray
         pool={state.dicePool}
         isRolling={state.status === 'rolling'}
+        displayValue={displayDiceValue}
         canRoll={isMyTurn && state.status === 'awaiting_roll' && !state.winnerColor}
         rollLabel={rollLabel}
         onRoll={onHumanRoll}
@@ -529,17 +571,17 @@ function makeHint(
   if (state.winnerColor) return '';
   if (!currentPlayer) return '';
   if (!isMyTurn) {
-    if (state.status === 'awaiting_roll') return `${currentPlayer.name} is about to roll…`;
-    if (state.status === 'rolling') return `${currentPlayer.name} is rolling…`;
-    if (state.status === 'awaiting_move') return `${currentPlayer.name} is choosing a move…`;
+    if (state.status === 'awaiting_roll') return `${currentPlayer.name} is about to roll...`;
+    if (state.status === 'rolling') return `${currentPlayer.name} is rolling...`;
+    if (state.status === 'awaiting_move') return `${currentPlayer.name} is choosing a move...`;
     return ' ';
   }
   if (state.status === 'awaiting_roll') {
     return state.dicePool.length > 0
-      ? 'Rolled a six — roll again!'
+      ? 'Rolled a six - roll again!'
       : 'Tap ROLL to start your turn.';
   }
-  if (state.status === 'rolling') return 'Rolling…';
+  if (state.status === 'rolling') return 'Rolling...';
   if (state.status === 'awaiting_move') {
     return state.dicePool.length > 1
       ? 'Tap a token, then pick which die to use.'
@@ -549,38 +591,85 @@ function makeHint(
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colors.bg },
+  root: { flex: 1, backgroundColor: '#050201' },
+  tableOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(5,2,1,0.78)',
+  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+    paddingTop: 4,
+    paddingBottom: 6,
   },
-  back: { ...typography.body, color: colors.gold },
+  exitBtn: {
+    borderWidth: 1,
+    borderColor: 'rgba(212,175,55,0.35)',
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    borderRadius: 11,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  back: { color: colors.gold, fontWeight: '900', fontSize: 12, letterSpacing: 1 },
   turnBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
-    backgroundColor: colors.surface,
+    backgroundColor: 'rgba(25,10,4,0.88)',
+    borderWidth: 1,
+    borderColor: 'rgba(212,175,55,0.5)',
     paddingHorizontal: spacing.md,
-    paddingVertical: 6,
+    paddingVertical: 8,
     borderRadius: 999,
+    shadowColor: colors.gold,
+    shadowOpacity: 0.28,
+    shadowRadius: 12,
+    elevation: 8,
   },
   dot: { width: 10, height: 10, borderRadius: 5 },
-  turnText: { ...typography.caption, color: colors.text },
-  matchId: { ...typography.caption, color: colors.textDim },
+  turnText: { ...typography.caption, color: colors.text, fontWeight: '800' },
+  matchId: { ...typography.caption, color: 'rgba(212,175,55,0.55)' },
+  titlePlaque: {
+    alignSelf: 'center',
+    minWidth: 190,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(212,175,55,0.35)',
+    paddingVertical: 6,
+    paddingHorizontal: 26,
+    marginBottom: 3,
+  },
+  titleText: {
+    color: colors.gold,
+    textAlign: 'center',
+    fontWeight: '900',
+    fontSize: 16,
+    letterSpacing: 4,
+    textShadowColor: 'rgba(212,175,55,0.55)',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 10,
+  },
   row: {
     flexDirection: 'row',
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
-    gap: spacing.sm,
+    paddingVertical: 3,
+    gap: 10,
   },
   rowSpacer: { flex: 1 },
   boardWrap: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+    paddingVertical: 0,
   },
-  boardSquare: { position: 'relative' },
+  boardSquare: {
+    position: 'relative',
+    shadowColor: colors.gold,
+    shadowOpacity: 0.42,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 18,
+  },
 });

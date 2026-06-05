@@ -4,7 +4,7 @@
 
 import { create } from 'zustand';
 import { collectDailyReward, getDailyRewardStatus, type DailyRewardStatus } from '@/src/supabase/transactions';
-import { useAuthStore } from './auth';
+import { useProfileStore } from './profile';
 
 /** 7-day rotating reward ladder. Day 7 is the bigger bonus. */
 export const DAILY_REWARDS = [100, 150, 200, 300, 400, 500, 1000] as const;
@@ -31,7 +31,11 @@ export const useWalletStore = create<WalletState>((set, get) => ({
 
   hydrate: async () => {
     if (get().hydrated) return;
-    const profile = useAuthStore.getState().profile;
+    const profileStore = useProfileStore.getState();
+    if (!profileStore.hydrated) {
+      await profileStore.hydrate();
+    }
+    const profile = useProfileStore.getState().profile;
     if (profile) {
       set({ coins: profile.coins, hydrated: true });
       await get().refreshDailyStatus();
@@ -61,10 +65,8 @@ export const useWalletStore = create<WalletState>((set, get) => ({
     if (result?.success) {
       // Refresh daily status and coins from profile
       await get().refreshDailyStatus();
-      const profile = useAuthStore.getState().profile;
-      if (profile) {
-        set({ coins: profile.coins });
-      }
+      const reward = result.rewardAmount ?? pending.reward;
+      set((state) => ({ coins: state.coins + reward }));
       return pending;
     }
     return null;

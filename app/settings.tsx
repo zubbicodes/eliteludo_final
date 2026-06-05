@@ -347,7 +347,6 @@ const styles = StyleSheet.create({
 
   langRow: {
     flexDirection: 'row',
-    gap: 0,
     padding: 8,
     gap: 8,
   },

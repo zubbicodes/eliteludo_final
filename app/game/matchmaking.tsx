@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useRouter } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Image, ImageBackground, Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, {
   FadeIn,
@@ -16,13 +16,10 @@ import Animated, {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Images } from '@/src/assets';
-import { supabase } from '@/src/supabase/client';
-import { findMatch, subscribeQueue } from '@/src/supabase/matches';
-import { useAuthStore } from '@/src/stores/auth';
+import { useProfileStore } from '@/src/stores/profile';
 import { colors } from '@/src/theme/colors';
 
-const BOT_FALLBACK_MS = 12_000;
-const POLL_INTERVAL_MS = 4_000;
+const BOT_FALLBACK_MS = 10_000;
 
 function RadarRing({ delay }: { delay: number }) {
   const scale = useSharedValue(0.3);
@@ -48,7 +45,7 @@ function RadarRing({ delay }: { delay: number }) {
     };
     const t = setTimeout(start, delay);
     return () => clearTimeout(t);
-  }, []);
+  }, [delay, opacity, scale]);
 
   const s = useAnimatedStyle(() => ({
     transform: [{ scale: scale.value }],
@@ -60,28 +57,32 @@ function RadarRing({ delay }: { delay: number }) {
 
 export default function MatchmakingScreen() {
   const router = useRouter();
+  const { mode } = useLocalSearchParams<{ mode?: string }>();
   const insets = useSafeAreaInsets();
-  const profile = useAuthStore((s) => s.profile);
+  const profile = useProfileStore((s) => s.profile);
+  const gameMode = mode === '4p' ? '4p' : '2p';
+  const targetPlayerCount = gameMode === '4p' ? 4 : 2;
 
   const pulseScale = useSharedValue(1);
-  const [label, setLabel] = useState('Searching…');
+  const [label, setLabel] = useState('Searching...');
   const [elapsed, setElapsed] = useState(0);
   const navigatedRef = useRef(false);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const fallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const elapsedRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const unsubRef = useRef<(() => void) | null>(null);
 
-  const navigate = (matchId: string) => {
+  const navigate = useCallback((matchId: string) => {
     if (navigatedRef.current) return;
     navigatedRef.current = true;
-    clearInterval(pollRef.current!);
     clearInterval(elapsedRef.current!);
     clearTimeout(fallbackRef.current!);
-    unsubRef.current?.();
     setLabel('Match found!');
-    setTimeout(() => router.replace(`/game/${matchId}` as never), 350);
-  };
+    setTimeout(() => {
+      router.replace({
+        pathname: '/game/[matchId]',
+        params: { matchId, mode: gameMode },
+      } as never);
+    }, 350);
+  }, [gameMode, router]);
 
   useEffect(() => {
     pulseScale.value = withRepeat(
@@ -94,36 +95,16 @@ export default function MatchmakingScreen() {
 
     elapsedRef.current = setInterval(() => setElapsed((n) => n + 1), 1000);
 
-    const run = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) { router.back(); return; }
-
-      unsubRef.current = subscribeQueue(session.user.id, navigate);
-
-      const r0 = await findMatch({ entryFee: 0, botFallback: false });
-      if (r0?.matchId) { navigate(r0.matchId); return; }
-
-      pollRef.current = setInterval(async () => {
-        const r = await findMatch({ entryFee: 0, botFallback: false });
-        if (r?.matchId) navigate(r.matchId);
-      }, POLL_INTERVAL_MS);
-
-      fallbackRef.current = setTimeout(async () => {
-        clearInterval(pollRef.current!);
-        const r = await findMatch({ entryFee: 0, botFallback: true });
-        if (r?.matchId) navigate(r.matchId);
-      }, BOT_FALLBACK_MS);
-    };
-
-    run();
+    fallbackRef.current = setTimeout(() => {
+      setLabel('Matching with computer...');
+      navigate(`solo-${Date.now()}`);
+    }, BOT_FALLBACK_MS);
 
     return () => {
-      clearInterval(pollRef.current!);
       clearInterval(elapsedRef.current!);
       clearTimeout(fallbackRef.current!);
-      unsubRef.current?.();
     };
-  }, []);
+  }, [navigate, pulseScale]);
 
   const pulseStyle = useAnimatedStyle(() => ({
     transform: [{ scale: pulseScale.value }],
@@ -132,6 +113,12 @@ export default function MatchmakingScreen() {
   const username = profile?.username ?? 'You';
   const mm = String(Math.floor(elapsed / 60)).padStart(2, '0');
   const ss = String(elapsed % 60).padStart(2, '0');
+  const playerSlots = Array.from({ length: targetPlayerCount }, (_, index) => ({
+    id: index,
+    name: index === 0 ? username : '???',
+    status: index === 0 ? 'READY' : 'SEARCHING',
+    ready: index === 0,
+  }));
 
   return (
     <View style={styles.root}>
@@ -158,27 +145,12 @@ export default function MatchmakingScreen() {
       {/* Main content */}
       <Animated.View entering={FadeInDown.delay(150).duration(500)} style={styles.content}>
 
-        {/* Radar + VS row */}
-        <View style={styles.versusRow}>
+        <View style={styles.playerCountBadge}>
+          <Ionicons name="people" size={14} color={colors.gold} />
+          <Text style={styles.playerCountText}>{targetPlayerCount} PLAYERS</Text>
+        </View>
 
-          {/* Left: Player card */}
-          <View style={styles.playerCard}>
-            <LinearGradient
-              colors={['#2B1A0A', '#100900']}
-              style={styles.avatarWrap}
-            >
-              <View style={styles.avatarInner}>
-                <Ionicons name="person" size={36} color={colors.gold} />
-              </View>
-            </LinearGradient>
-            <Text style={styles.playerName} numberOfLines={1}>{username}</Text>
-            <View style={styles.readyBadge}>
-              <View style={[styles.readyDot, { backgroundColor: colors.green }]} />
-              <Text style={[styles.readyText, { color: colors.green }]}>READY</Text>
-            </View>
-          </View>
-
-          {/* Center: radar pulse */}
+        <View style={styles.matchTable}>
           <View style={styles.radarWrap}>
             <RadarRing delay={0} />
             <RadarRing delay={700} />
@@ -193,23 +165,41 @@ export default function MatchmakingScreen() {
             </Animated.View>
           </View>
 
-          {/* Right: Opponent card */}
-          <View style={styles.playerCard}>
-            <LinearGradient
-              colors={['#1A1A2A', '#0A0A15']}
-              style={styles.avatarWrap}
-            >
-              <View style={[styles.avatarInner, styles.avatarUnknown]}>
-                <Ionicons name="help" size={32} color="rgba(255,255,255,0.2)" />
+          <View style={styles.playersGrid}>
+            {playerSlots.map((slot) => (
+              <View key={slot.id} style={styles.playerCard}>
+                <LinearGradient
+                  colors={slot.ready ? ['#2B1A0A', '#100900'] : ['#1A1A2A', '#0A0A15']}
+                  style={styles.avatarWrap}
+                >
+                  <View style={[styles.avatarInner, !slot.ready && styles.avatarUnknown]}>
+                    <Ionicons
+                      name={slot.ready ? 'person' : 'help'}
+                      size={slot.ready ? 34 : 30}
+                      color={slot.ready ? colors.gold : 'rgba(255,255,255,0.2)'}
+                    />
+                  </View>
+                </LinearGradient>
+                <Text style={styles.playerName} numberOfLines={1}>{slot.name}</Text>
+                <View style={styles.readyBadge}>
+                  <View
+                    style={[
+                      styles.readyDot,
+                      { backgroundColor: slot.ready ? colors.green : colors.gold },
+                    ]}
+                  />
+                  <Text
+                    style={[
+                      styles.readyText,
+                      { color: slot.ready ? colors.green : colors.gold },
+                    ]}
+                  >
+                    {slot.status}
+                  </Text>
+                </View>
               </View>
-            </LinearGradient>
-            <Text style={styles.playerName}>???</Text>
-            <View style={styles.readyBadge}>
-              <View style={[styles.readyDot, { backgroundColor: colors.gold }]} />
-              <Text style={[styles.readyText, { color: colors.gold }]}>SEARCHING</Text>
-            </View>
+            ))}
           </View>
-
         </View>
 
         {/* Status */}
@@ -220,7 +210,7 @@ export default function MatchmakingScreen() {
         </View>
 
         <Text style={styles.timer}>{mm}:{ss}</Text>
-        <Text style={styles.fallbackHint}>Falls back to AI after 12 seconds</Text>
+        <Text style={styles.fallbackHint}>Computer match starts after 10 seconds</Text>
 
         {/* Token decoration */}
         <View style={styles.tokensRow}>
@@ -286,22 +276,45 @@ const styles = StyleSheet.create({
     gap: 18,
   },
 
-  versusRow: {
+  playerCountBadge: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 7,
+    borderWidth: 1,
+    borderColor: 'rgba(212,175,55,0.28)',
+    borderRadius: 999,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    paddingHorizontal: 13,
+    paddingVertical: 7,
+  },
+  playerCountText: {
+    color: colors.gold,
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 1.8,
+  },
+  matchTable: {
     gap: 16,
+    width: '100%',
+    alignItems: 'center',
+  },
+  playersGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 12,
     width: '100%',
   },
 
   playerCard: {
-    flex: 1,
+    width: '46%',
     alignItems: 'center',
     gap: 8,
   },
   avatarWrap: {
-    width: 84,
-    height: 84,
-    borderRadius: 42,
+    width: 76,
+    height: 76,
+    borderRadius: 38,
     borderWidth: 2,
     borderColor: colors.goldDark,
     alignItems: 'center',
@@ -313,9 +326,9 @@ const styles = StyleSheet.create({
     elevation: 10,
   },
   avatarInner: {
-    width: 74,
-    height: 74,
-    borderRadius: 37,
+    width: 66,
+    height: 66,
+    borderRadius: 33,
     backgroundColor: 'rgba(0,0,0,0.4)',
     alignItems: 'center',
     justifyContent: 'center',

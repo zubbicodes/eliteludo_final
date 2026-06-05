@@ -14,6 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
 import { supabase } from '@/src/supabase/client';
+import { getSupabaseErrorMessage } from '@/src/supabase/errors';
 import { colors } from '@/src/theme/colors';
 import { radius, spacing, typography } from '@/src/theme/typography';
 import { haptics } from '@/src/utils/haptics';
@@ -36,10 +37,12 @@ export default function PhoneLoginScreen() {
     setError(null);
     // Phone must be in E.164 format: +1234567890
     const normalized = phone.trim().startsWith('+') ? phone.trim() : `+${phone.trim()}`;
-    const { error: err } = await supabase.auth.signInWithOtp({ phone: normalized });
+    const { error: err } = await supabase.auth
+      .signInWithOtp({ phone: normalized })
+      .catch((caught) => ({ error: caught }));
     setLoading(false);
     if (err) {
-      setError(err.message);
+      setError(getSupabaseErrorMessage(err));
       haptics.warning();
     } else {
       haptics.success();
@@ -54,14 +57,16 @@ export default function PhoneLoginScreen() {
     haptics.tap();
     setLoading(true);
     setError(null);
-    const { data, error: err } = await supabase.auth.verifyOtp({
-      phone,
-      token: otp,
-      type: 'sms',
-    });
+    const { data, error: err } = await supabase.auth
+      .verifyOtp({
+        phone,
+        token: otp,
+        type: 'sms',
+      })
+      .catch((caught) => ({ data: { user: null }, error: caught }));
     setLoading(false);
     if (err) {
-      setError(err.message);
+      setError(getSupabaseErrorMessage(err));
       haptics.warning();
     } else {
       haptics.success();

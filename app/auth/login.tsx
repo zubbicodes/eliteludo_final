@@ -20,6 +20,7 @@ import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import { SocialButton } from '@/src/components/SocialButton';
 import { Images } from '@/src/assets';
 import { supabase } from '@/src/supabase/client';
+import { getSupabaseErrorMessage } from '@/src/supabase/errors';
 import { colors } from '@/src/theme/colors';
 import { spacing } from '@/src/theme/typography';
 import { haptics } from '@/src/utils/haptics';
@@ -37,12 +38,14 @@ export default function LoginScreen() {
     haptics.tap();
     setLoading(true);
     setError(null);
-    const { error: err } = await supabase.auth.signInWithPassword({
-      email: email.trim(),
-      password,
-    });
+    const { error: err } = await supabase.auth
+      .signInWithPassword({
+        email: email.trim(),
+        password,
+      })
+      .catch((caught) => ({ error: caught }));
     setLoading(false);
-    if (err) { setError(err.message); haptics.warning(); }
+    if (err) { setError(getSupabaseErrorMessage(err)); haptics.warning(); }
     else { haptics.success(); router.replace('/(tabs)/home'); }
   };
 

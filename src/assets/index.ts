@@ -16,7 +16,6 @@ export const Images = {
   cityDoha: require('../../assets/images/city-doha.png'),
 
   // Board
-  boardMini: require('../../assets/images/board-mini.png'),
   board: require('../../assets/images/board.png'),
 
   // Logo
@@ -51,6 +50,11 @@ export const Images = {
 
   // Icons
   crown: require('../../assets/images/crown.png'),
+  clubCrownEmerald: require('../../assets/crowns/club-crown-emerald.png'),
+  clubCrownRoyal: require('../../assets/crowns/club-crown-royal.png'),
+  clubCrownRuby: require('../../assets/crowns/club-crown-ruby.png'),
+  clubCrownRed: require('../../assets/crowns/club-crown-red.png'),
+  clubCrownDesert: require('../../assets/crowns/club-crown-desert.png'),
   coin: require('../../assets/images/coin.png'),
   coinSingle: require('../../assets/images/coin-single.png'),
 } as const;

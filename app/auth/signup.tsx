@@ -18,6 +18,7 @@ import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 
 import { Images } from '@/src/assets';
 import { supabase } from '@/src/supabase/client';
+import { getSupabaseErrorMessage } from '@/src/supabase/errors';
 import { colors } from '@/src/theme/colors';
 import { spacing, typography } from '@/src/theme/typography';
 import { haptics } from '@/src/utils/haptics';
@@ -39,9 +40,11 @@ export default function SignupScreen() {
     haptics.tap();
     setLoading(true);
     setError(null);
-    const { data, error: err } = await supabase.auth.signUp({ email: email.trim(), password });
+    const { data, error: err } = await supabase.auth
+      .signUp({ email: email.trim(), password })
+      .catch((caught) => ({ data: { session: null }, error: caught }));
     setLoading(false);
-    if (err) { setError(err.message); haptics.warning(); return; }
+    if (err) { setError(getSupabaseErrorMessage(err)); haptics.warning(); return; }
     if (!data.session) { setPendingConfirm(true); return; }
     haptics.success();
     router.replace('/auth/onboarding');

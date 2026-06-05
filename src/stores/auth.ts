@@ -2,6 +2,7 @@ import type { Session, User } from '@supabase/supabase-js';
 import { create } from 'zustand';
 
 import { supabase } from '@/src/supabase/client';
+import { getSupabaseErrorMessage } from '@/src/supabase/errors';
 
 type AuthState = {
   session: Session | null;
@@ -18,9 +19,15 @@ export const useAuthStore = create<AuthState>((set) => ({
   setSession: (session) => set({ session, user: session?.user ?? null }),
 
   initialize: () => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      set({ session, user: session?.user ?? null, isHydrating: false });
-    });
+    supabase.auth
+      .getSession()
+      .then(({ data: { session } }) => {
+        set({ session, user: session?.user ?? null, isHydrating: false });
+      })
+      .catch((error) => {
+        console.warn('[auth] getSession failed:', getSupabaseErrorMessage(error));
+        set({ session: null, user: null, isHydrating: false });
+      });
 
     const {
       data: { subscription },
