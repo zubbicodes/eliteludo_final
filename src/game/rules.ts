@@ -168,7 +168,11 @@ export function getValidMoves(state: GameState, color: Color): MoveOption[] {
     for (const token of ownTokens) {
       const to = tryMove(token, die);
       if (!to) continue;
+      const isOpeningFromBase = token.location.kind === 'home';
+      const destIsSafe = to.kind === 'track' && SAFE_TRACK_INDICES.has(to.index);
       const blockedByOwn =
+        !isOpeningFromBase &&
+        !destIsSafe &&
         to.kind !== 'finished' &&
         ownTokens.some((t) => t.id !== token.id && samePlace(t.location, to));
       if (blockedByOwn) continue;
@@ -250,7 +254,10 @@ export function finishMove(state: GameState): GameState {
   if (cleared.dicePool.length > 0) {
     const color = cleared.players[cleared.currentPlayerIdx].color;
     const moves = getValidMoves(cleared, color);
-    if (moves.length > 0) return { ...cleared, status: 'awaiting_move' };
+    if (moves.length > 0) {
+      if (earnedBonusRoll) return { ...cleared, status: 'awaiting_roll' };
+      return { ...cleared, status: 'awaiting_move' };
+    }
     // dead pool — skip remaining
     if (earnedBonusRoll) return { ...cleared, dicePool: [], status: 'awaiting_roll' };
     return advanceToNextPlayer({ ...cleared, dicePool: [] });

@@ -6,6 +6,7 @@ export type DeductEntryFeeResult = {
   success: boolean;
   deducted?: number;
   remaining?: number;
+  queueToken?: string;
   reason?: string;
   current?: number;
   required?: number;
@@ -25,16 +26,42 @@ export type AwardMatchRewardResult = {
   winnerUserId?: string;
   prize?: number;
   winnerNewBalance?: number;
+  alreadySettled?: boolean;
+  crownUnlocked?: string | null;
+};
+
+export type GrantRewardResult = {
+  success: boolean;
+  amount?: number;
+  balance?: number;
+  reason?: string;
+};
+
+export type ShopPurchaseResult = {
+  success: boolean;
+  itemId?: string;
+  balance?: number;
+  reason?: string;
+};
+
+export type IapVerifyResult = {
+  success: boolean;
+  productId?: string;
+  amount?: number;
+  balance?: number;
+  alreadyGranted?: boolean;
+  reason?: string;
 };
 
 // ── Entry fee deduction ─────────────────────────────────────────────────────────
 
 export async function deductEntryFee(
   entryFee: number,
+  metadata?: Record<string, unknown>,
 ): Promise<DeductEntryFeeResult | null> {
   const { data, error } = await supabase.functions.invoke<DeductEntryFeeResult>(
     'deduct-entry-fee',
-    { body: { entryFee } },
+    { body: { entryFee, metadata } },
   );
   if (error) {
     console.warn('[transactions] deduct-entry-fee error:', error.message);
@@ -137,6 +164,7 @@ export async function awardMatchReward(params: {
   winnerUserId: string;
   loserUserId?: string;
   entryFee: number;
+  citySlug?: string;
 }): Promise<AwardMatchRewardResult | null> {
   const { data, error } = await supabase.functions.invoke<AwardMatchRewardResult>(
     'award-match-reward',
@@ -144,6 +172,55 @@ export async function awardMatchReward(params: {
   );
   if (error) {
     console.warn('[transactions] award-match-reward error:', error.message);
+    return null;
+  }
+  return data;
+}
+
+export async function grantAdReward(params: {
+  adUnitId: string;
+  rewardAmount?: number;
+  placement?: string;
+}): Promise<GrantRewardResult | null> {
+  const { data, error } = await supabase.functions.invoke<GrantRewardResult>(
+    'grant-ad-reward',
+    { body: params },
+  );
+  if (error) {
+    console.warn('[transactions] grant-ad-reward error:', error.message);
+    return null;
+  }
+  return data;
+}
+
+export async function purchaseShopItem(params: {
+  itemId: string;
+  price: number;
+  currency?: 'coins' | 'gems';
+  kind: 'token_skin' | 'dice_skin' | 'crown';
+}): Promise<ShopPurchaseResult | null> {
+  const { data, error } = await supabase.functions.invoke<ShopPurchaseResult>(
+    'purchase-shop-item',
+    { body: params },
+  );
+  if (error) {
+    console.warn('[transactions] purchase-shop-item error:', error.message);
+    return null;
+  }
+  return data;
+}
+
+export async function verifyIapPurchase(params: {
+  productId: string;
+  purchaseToken: string;
+  platform?: 'android' | 'ios';
+}): Promise<IapVerifyResult | null> {
+  const { data, error } = await supabase.functions.invoke<IapVerifyResult>(
+    'verify-iap-purchase',
+    { body: params },
+  );
+  if (error) {
+    console.warn('[transactions] verify-iap-purchase error:', error.message);
     return null;
   }
   return data;

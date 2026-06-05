@@ -1,140 +1,40 @@
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-// ── Types ────────────────────────────────────────────────────────────────────
-
 type Color = "red" | "green" | "yellow" | "blue";
-type TokenLocation =
-  | { kind: "home"; slot: 0 | 1 | 2 | 3 }
-  | { kind: "track"; index: number }
-  | { kind: "home_col"; index: 0 | 1 | 2 | 3 | 4 }
-  | { kind: "finished" };
-type Token = { id: string; color: Color; location: TokenLocation };
+type MatchMode = "1v1" | "4p" | "private";
+
 type Player = {
   color: Color;
   isAI: boolean;
   name: string;
   avatarId: number;
-  tokens: [Token, Token, Token, Token];
-};
-type InitialGameState = {
-  players: Player[];
-  currentPlayerIdx: number;
-  dicePool: number[];
-  consecutiveSixes: number;
-  status: "awaiting_roll";
-  winnerColor: null;
-  lastRollByColor: Record<string, never>;
-  lastMove: null;
+  tokens: { id: string; color: Color; location: { kind: "home"; slot: number } }[];
 };
 
-function makeInitialPlayer(
-  color: Color,
-  name: string,
-  avatarId: number,
-): Player {
-  const tokens = ([0, 1, 2, 3] as const).map((slot) => ({
-    id: `${color}-${slot}`,
-    color,
-    location: { kind: "home" as const, slot },
-  })) as Player["tokens"];
-  return { color, name, isAI: false, avatarId, tokens };
-}
-
-// ── CORS ─────────────────────────────────────────────────────────────────────
-
+const COLORS: Color[] = ["red", "green", "yellow", "blue"];
 const cors = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// ── Handler ───────────────────────────────────────────────────────────────────
+function makePlayer(color: Color, name: string, avatarId: number, isAI = false): Player {
+  return {
+    color,
+    name,
+    isAI,
+    avatarId,
+    tokens: [0, 1, 2, 3].map((slot) => ({
+      id: `${color}-${slot}`,
+      color,
+      location: { kind: "home", slot },
+    })),
+  };
+}
 
-serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
-
-  const authHeader = req.headers.get("Authorization");
-  if (!authHeader) {
-    return new Response("Unauthorized", { status: 401, headers: cors });
-  }
-
-  let entryFee = 0;
-  let botFallback = false;
-  try {
-    const body = await req.json();
-    entryFee = body.entryFee ?? 0;
-    botFallback = body.botFallback ?? false;
-  } catch {
-    // use defaults
-  }
-
-  const svc = createClient(
-    Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-  );
-  const anon = createClient(
-    Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_ANON_KEY")!,
-    { global: { headers: { Authorization: authHeader } } },
-  );
-
-  const { data: { user }, error: authErr } = await anon.auth.getUser();
-  if (authErr || !user) {
-    return new Response("Unauthorized", { status: 401, headers: cors });
-  }
-
-  // Bot fallback: hand back a solo match ID — client runs existing vs-AI path
-  if (botFallback) {
-    await svc.from("match_queue").delete().eq("user_id", user.id);
-    const matchId = `solo-${crypto.randomUUID()}`;
-    return new Response(
-      JSON.stringify({ matchId, matched: false, isBot: true }),
-      { headers: { ...cors, "Content-Type": "application/json" } },
-    );
-  }
-
-  // Refresh queue entry (delete + insert to reset timestamp)
-  await svc.from("match_queue").delete().eq("user_id", user.id);
-  await svc.from("match_queue").insert({
-    user_id: user.id,
-    mode: "1v1",
-    entry_fee: entryFee,
-  });
-
-  // Look for another waiting player
-  const { data: partner } = await svc
-    .from("match_queue")
-    .select("id, user_id")
-    .eq("mode", "1v1")
-    .eq("entry_fee", entryFee)
-    .is("match_id", null)
-    .neq("user_id", user.id)
-    .order("joined_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
-
-  if (!partner) {
-    return new Response(
-      JSON.stringify({ matchId: null, matched: false }),
-      { headers: { ...cors, "Content-Type": "application/json" } },
-    );
-  }
-
-  // Fetch both profiles
-  const [{ data: myProfile }, { data: partnerProfile }] = await Promise.all([
-    svc.from("profiles").select("username, avatar_id").eq("id", user.id).single(),
-    svc.from("profiles").select("username, avatar_id").eq("id", partner.user_id).single(),
-  ]);
-
-  const myColor: Color = "red";
-  const partnerColor: Color = "green";
-
-  const boardState: InitialGameState = {
-    players: [
-      makeInitialPlayer(myColor, myProfile?.username ?? "Player 1", myProfile?.avatar_id ?? 0),
-      makeInitialPlayer(partnerColor, partnerProfile?.username ?? "Player 2", partnerProfile?.avatar_id ?? 1),
-    ],
+function makeBoardState(players: Player[]) {
+  return {
+    players,
     currentPlayerIdx: 0,
     dicePool: [],
     consecutiveSixes: 0,
@@ -143,46 +43,206 @@ serve(async (req) => {
     lastRollByColor: {},
     lastMove: null,
   };
+}
 
-  const { data: newMatch, error: matchErr } = await svc
-    .from("matches")
-    .insert({
-      mode: "1v1",
-      status: "active",
-      players: [
-        {
-          user_id: user.id,
-          color: myColor,
-          username: myProfile?.username,
-          avatar_id: myProfile?.avatar_id ?? 0,
-        },
-        {
-          user_id: partner.user_id,
-          color: partnerColor,
-          username: partnerProfile?.username,
-          avatar_id: partnerProfile?.avatar_id ?? 1,
-        },
-      ],
-      current_turn_user_id: user.id,
-      board_state: boardState,
-      entry_fee: entryFee,
-      prize_pool: entryFee * 2,
-    })
-    .select("id")
-    .single();
+function roomCode() {
+  return Math.random().toString(36).slice(2, 8).toUpperCase();
+}
 
-  if (matchErr || !newMatch) {
-    return new Response("Failed to create match", { status: 500, headers: cors });
+async function refundEntryFee(svc: any, userId: string, amount: number, reason: string) {
+  if (amount <= 0) return 0;
+  const { data: profile } = await svc.from("profiles").select("coins").eq("id", userId).single();
+  if (!profile) return 0;
+  await svc.from("profiles").update({ coins: Number(profile.coins ?? 0) + amount }).eq("id", userId);
+  await svc.from("transactions").insert({
+    user_id: userId,
+    type: "refund",
+    amount,
+    currency: "coins",
+    metadata: { reason },
+  });
+  return amount;
+}
+
+serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
+
+  const authHeader = req.headers.get("Authorization");
+  if (!authHeader) return new Response("Unauthorized", { status: 401, headers: cors });
+
+  const body = await req.json().catch(() => ({}));
+  const mode = (body.mode === "4p" || body.mode === "private" ? body.mode : "1v1") as MatchMode;
+  const entryFee = Math.max(0, Number(body.entryFee ?? 0));
+  const botFallback = Boolean(body.botFallback);
+  const cancel = Boolean(body.cancel);
+  const citySlug = typeof body.citySlug === "string" ? body.citySlug : null;
+  const privateAction = body.privateAction === "join" ? "join" : body.privateAction === "create" ? "create" : null;
+
+  const svc = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+  const anon = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_ANON_KEY")!, {
+    global: { headers: { Authorization: authHeader } },
+  });
+
+  const { data: { user }, error: authErr } = await anon.auth.getUser();
+  if (authErr || !user) return new Response("Unauthorized", { status: 401, headers: cors });
+
+  if (cancel) {
+    await svc.from("match_queue").update({ cancelled_at: new Date().toISOString() }).eq("user_id", user.id).is("match_id", null);
+    await svc.from("match_queue").delete().eq("user_id", user.id).is("match_id", null);
+    const refunded = await refundEntryFee(svc, user.id, entryFee, "queue_cancelled");
+    return new Response(JSON.stringify({ matchId: null, matched: false, refunded }), {
+      headers: { ...cors, "Content-Type": "application/json" },
+    });
   }
 
-  // Link both queue entries to the new match
-  await svc
-    .from("match_queue")
-    .update({ match_id: newMatch.id })
-    .in("user_id", [user.id, partner.user_id]);
+  const { data: myProfile } = await svc
+    .from("profiles")
+    .select("username, avatar_id")
+    .eq("id", user.id)
+    .single();
 
-  return new Response(
-    JSON.stringify({ matchId: newMatch.id, matched: true }),
-    { headers: { ...cors, "Content-Type": "application/json" } },
-  );
+  if (mode === "private" && privateAction === "create") {
+    const code = roomCode();
+    const players = [makePlayer("red", myProfile?.username ?? "Host", myProfile?.avatar_id ?? 0)];
+    const { data: match, error } = await svc
+      .from("matches")
+      .insert({
+        mode: "private",
+        status: "waiting",
+        room_code: code,
+        host_user_id: user.id,
+        players: [{ user_id: user.id, color: "red", username: myProfile?.username, avatar_id: myProfile?.avatar_id ?? 0 }],
+        current_turn_user_id: user.id,
+        board_state: makeBoardState(players),
+        entry_fee: entryFee,
+        prize_pool: entryFee,
+        city_slug: citySlug,
+      })
+      .select("id")
+      .single();
+    if (error || !match) return new Response("Failed to create room", { status: 500, headers: cors });
+    return new Response(JSON.stringify({ matchId: match.id, matched: false, roomCode: code }), {
+      headers: { ...cors, "Content-Type": "application/json" },
+    });
+  }
+
+  if (mode === "private" && privateAction === "join") {
+    const code = String(body.roomCode ?? "").toUpperCase();
+    const { data: match } = await svc
+      .from("matches")
+      .select("id, players, entry_fee, city_slug")
+      .eq("room_code", code)
+      .eq("status", "waiting")
+      .single();
+    if (!match) {
+      return new Response(JSON.stringify({ matchId: null, matched: false, reason: "room_not_found" }), {
+        status: 404,
+        headers: { ...cors, "Content-Type": "application/json" },
+      });
+    }
+    const matchPlayers = Array.isArray(match.players) ? match.players : [];
+    const color = COLORS[matchPlayers.length] ?? "green";
+    const nextPlayers = [
+      ...matchPlayers,
+      { user_id: user.id, color, username: myProfile?.username, avatar_id: myProfile?.avatar_id ?? 0 },
+    ];
+    const boardPlayers = nextPlayers.map((p: any, i: number) =>
+      makePlayer(p.color, p.username ?? `Player ${i + 1}`, p.avatar_id ?? i),
+    );
+    await svc.from("matches").update({
+      players: nextPlayers,
+      status: nextPlayers.length >= 2 ? "active" : "waiting",
+      board_state: makeBoardState(boardPlayers),
+      prize_pool: Number(match.entry_fee ?? entryFee) * nextPlayers.length,
+    }).eq("id", match.id);
+    return new Response(JSON.stringify({ matchId: match.id, matched: nextPlayers.length >= 2, roomCode: code }), {
+      headers: { ...cors, "Content-Type": "application/json" },
+    });
+  }
+
+  if (botFallback) {
+    await svc.from("match_queue").delete().eq("user_id", user.id).is("match_id", null);
+    const target = mode === "4p" ? 4 : 2;
+    const players = [
+      makePlayer("red", myProfile?.username ?? "You", myProfile?.avatar_id ?? 0),
+      ...COLORS.slice(1, target).map((color, i) => makePlayer(color, `Bot ${i + 1}`, i + 1, true)),
+    ];
+    const matchPlayers = players.map((p, i) => ({
+      user_id: i === 0 ? user.id : `bot-${crypto.randomUUID()}`,
+      color: p.color,
+      username: p.name,
+      avatar_id: p.avatarId,
+      is_bot: p.isAI,
+    }));
+    const { data: match } = await svc.from("matches").insert({
+      mode: mode === "4p" ? "4p" : "1v1",
+      status: "active",
+      players: matchPlayers,
+      current_turn_user_id: user.id,
+      board_state: makeBoardState(players),
+      entry_fee: entryFee,
+      prize_pool: entryFee * target,
+      city_slug: citySlug,
+    }).select("id").single();
+    return new Response(JSON.stringify({ matchId: match?.id ?? `solo-${crypto.randomUUID()}`, matched: false, isBot: true }), {
+      headers: { ...cors, "Content-Type": "application/json" },
+    });
+  }
+
+  await svc.from("match_queue").delete().eq("user_id", user.id).is("match_id", null);
+  await svc.from("match_queue").insert({
+    user_id: user.id,
+    mode: mode === "4p" ? "4p" : "1v1",
+    entry_fee: entryFee,
+    room_code: null,
+  });
+
+  const targetCount = mode === "4p" ? 4 : 2;
+  const { data: queued } = await svc
+    .from("match_queue")
+    .select("user_id, joined_at")
+    .eq("mode", mode === "4p" ? "4p" : "1v1")
+    .eq("entry_fee", entryFee)
+    .is("match_id", null)
+    .order("joined_at", { ascending: true })
+    .limit(targetCount);
+
+  if (!queued || queued.length < targetCount) {
+    return new Response(JSON.stringify({ matchId: null, matched: false }), {
+      headers: { ...cors, "Content-Type": "application/json" },
+    });
+  }
+
+  const userIds = queued.map((q: { user_id: string }) => q.user_id);
+  const { data: profiles } = await svc
+    .from("profiles")
+    .select("id, username, avatar_id")
+    .in("id", userIds);
+  const byId = new Map((profiles ?? []).map((p: any) => [p.id, p]));
+  const matchPlayers = userIds.map((id: string, i: number) => ({
+    user_id: id,
+    color: COLORS[i],
+    username: byId.get(id)?.username ?? `Player ${i + 1}`,
+    avatar_id: byId.get(id)?.avatar_id ?? i,
+  }));
+  const boardPlayers = matchPlayers.map((p) => makePlayer(p.color, p.username, p.avatar_id));
+
+  const { data: newMatch, error: matchErr } = await svc.from("matches").insert({
+    mode: mode === "4p" ? "4p" : "1v1",
+    status: "active",
+    players: matchPlayers,
+    current_turn_user_id: userIds[0],
+    board_state: makeBoardState(boardPlayers),
+    entry_fee: entryFee,
+    prize_pool: entryFee * targetCount,
+    city_slug: citySlug,
+  }).select("id").single();
+
+  if (matchErr || !newMatch) return new Response("Failed to create match", { status: 500, headers: cors });
+
+  await svc.from("match_queue").update({ match_id: newMatch.id }).in("user_id", userIds).is("match_id", null);
+
+  return new Response(JSON.stringify({ matchId: newMatch.id, matched: true }), {
+    headers: { ...cors, "Content-Type": "application/json" },
+  });
 });

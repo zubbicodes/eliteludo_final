@@ -37,6 +37,7 @@ import { BoardCanvas } from '@/src/skia/Board';
 import { Particles, type Burst } from '@/src/skia/Particles';
 import { Token as TokenView } from '@/src/skia/Token';
 import { haptics } from '@/src/utils/haptics';
+import { sound } from '@/src/utils/sound';
 import { useProfileStore } from '@/src/stores/profile';
 import { chooseMove, useGameStore } from '@/src/stores/game';
 import { colors } from '@/src/theme/colors';
@@ -56,12 +57,19 @@ const MIN_MOVE_MS = 220;
 const CAPTURE_TAIL_MS = 260;
 
 export default function GameScreen() {
-  const { matchId, mode } = useLocalSearchParams<{ matchId: string; mode?: string }>();
+  const { matchId, mode, entryFee, citySlug } = useLocalSearchParams<{
+    matchId: string;
+    mode?: string;
+    entryFee?: string;
+    citySlug?: string;
+  }>();
   const { width } = useWindowDimensions();
   const gameMode = mode === '4p' ? '4p' : '2p';
 
   // Solo = client-only path; multiplayer = server dice + Realtime sync
-  const isSolo = !matchId || matchId.startsWith('solo-');
+  const isSoloMatchId = !matchId || matchId.startsWith('solo-');
+  const [botBackedMatch, setBotBackedMatch] = useState(false);
+  const isLocalBotGame = isSoloMatchId || botBackedMatch;
 
   const state = useGameStore((s) => s.state);
   const validMoves = useGameStore((s) => s.validMoves);
@@ -101,17 +109,17 @@ export default function GameScreen() {
 
   // ── Effect: Solo init - new game when mount or profile settles. ──
   useEffect(() => {
-    if (!isSolo) return;
+    if (!isSoloMatchId) return;
     const humanColor = (profile?.colorId as Color | undefined) ?? 'red';
     const human = profile
       ? { name: profile.username, avatarId: profile.avatarId }
       : undefined;
     newGame(humanColor, gameMode === '2p' ? 1 : 3, human);
-  }, [isSolo, matchId, gameMode, newGame, profile?.colorId, profile?.username, profile?.avatarId]);
+  }, [isSoloMatchId, matchId, gameMode, newGame, profile?.colorId, profile?.username, profile?.avatarId]);
 
   // ── Effect: Multiplayer init - load from DB and subscribe to Realtime. ──
   useEffect(() => {
-    if (isSolo || !matchId) return;
+    if (isSoloMatchId || !matchId) return;
 
     let unsubscribeRealtime: (() => void) | null = null;
 
@@ -129,6 +137,8 @@ export default function GameScreen() {
       if (!me) return;
 
       setMyColor(me.color);
+      setBotBackedMatch(match.players.some((p: MatchPlayer & { is_bot?: boolean }) => p.is_bot) ||
+        match.board_state.players.some((p) => p.isAI));
       myColorRef.current = me.color;
       mpPlayersRef.current = match.players;
       prevPlayerIdxRef.current = match.board_state.currentPlayerIdx;
@@ -155,11 +165,11 @@ export default function GameScreen() {
 
     init();
     return () => { unsubscribeRealtime?.(); };
-  }, [isSolo, matchId]);
+  }, [isSoloMatchId, matchId]);
 
   const currentPlayer: Player | undefined = state.players[state.currentPlayerIdx];
 
-  const isMyTurn = isSolo
+  const isMyTurn = isLocalBotGame
     ? !!currentPlayer && !currentPlayer.isAI
     : !!currentPlayer && currentPlayer.color === myColor;
 
@@ -168,13 +178,14 @@ export default function GameScreen() {
   // Multiplayer: call roll-dice EF, wait for response, then settle.
   useEffect(() => {
     if (state.status !== 'rolling') return;
-    if (!isSolo && !isMyTurn) return; // opponent's roll - we'll get it via Realtime
+    if (!isLocalBotGame && !isMyTurn) return; // opponent's roll - we'll get it via Realtime
 
-    if (isSolo) {
+    if (isLocalBotGame) {
       const t = setTimeout(() => {
         const value = finishRoll();
         setDisplayDiceValue(value);
         haptics.medium();
+        sound.play('roll');
       }, ROLL_ANIM_MS);
       return () => clearTimeout(t);
     }
@@ -190,14 +201,15 @@ export default function GameScreen() {
         const value = finishRoll(result?.value);
         setDisplayDiceValue(value);
         haptics.medium();
+        sound.play('roll');
       }, wait);
     });
     return () => { cancelled = true; };
-  }, [state.status, isMyTurn, isSolo, matchId, finishRoll]);
+  }, [state.status, isMyTurn, isLocalBotGame, matchId, finishRoll]);
 
   // ── Effect: AI is awaiting_roll - schedule a roll (solo only). ──
   useEffect(() => {
-    if (!isSolo) return;
+    if (!isLocalBotGame) return;
     if (state.status !== 'awaiting_roll' || !currentPlayer?.isAI) return;
     if (state.winnerColor) return;
     const t = setTimeout(() => {
@@ -205,11 +217,11 @@ export default function GameScreen() {
       beginRoll();
     }, THINK_MS);
     return () => clearTimeout(t);
-  }, [isSolo, state.status, currentPlayer, state.winnerColor, beginRoll]);
+  }, [isLocalBotGame, state.status, currentPlayer, state.winnerColor, beginRoll]);
 
   // ── Effect: AI is awaiting_move - schedule a pick (solo only). ──
   useEffect(() => {
-    if (!isSolo) return;
+    if (!isLocalBotGame) return;
     if (state.status !== 'awaiting_move' || !currentPlayer?.isAI) return;
     if (state.winnerColor) return;
     const t = setTimeout(() => {
@@ -217,7 +229,7 @@ export default function GameScreen() {
       if (pick) selectMove(pick);
     }, THINK_MS);
     return () => clearTimeout(t);
-  }, [isSolo, state, currentPlayer, selectMove]);
+  }, [isLocalBotGame, state, currentPlayer, selectMove]);
 
   // ── Effect: token movement anim has played - settle into next status. ──
   useEffect(() => {
@@ -238,11 +250,12 @@ export default function GameScreen() {
   useEffect(() => {
     if (!state.winnerColor) return;
     const winColor = state.winnerColor;
-    const youWon = isSolo
+    const youWon = isLocalBotGame
       ? !state.players.find((p) => p.color === winColor)?.isAI
       : winColor === myColor;
     if (youWon) haptics.success();
     else haptics.warning();
+    sound.play('win');
     setBursts((bs) => [
       ...bs,
       {
@@ -256,11 +269,16 @@ export default function GameScreen() {
     const t = setTimeout(() => {
       router.replace({
         pathname: '/game/result',
-        params: { winner: winColor as string },
+        params: {
+          winner: winColor as string,
+          matchId: matchId ?? '',
+          entryFee: entryFee ?? '0',
+          citySlug: citySlug ?? '',
+        },
       });
     }, 1500);
     return () => clearTimeout(t);
-  }, [state.winnerColor, boardSize, isSolo, myColor]);
+  }, [state.winnerColor, boardSize, isLocalBotGame, myColor, matchId, entryFee, citySlug]);
 
   // ── Effect: capture -> particle burst. ──
   useEffect(() => {
@@ -279,6 +297,7 @@ export default function GameScreen() {
       .filter((c): c is Color => !!c);
     const t = setTimeout(() => {
       haptics.heavy();
+      sound.play('capture');
       setBursts((bs) => [
         ...bs,
         ...captureColors.map((c, i) => ({
@@ -310,7 +329,7 @@ export default function GameScreen() {
     const prevStatus = prevStatusRef.current;
     prevStatusRef.current = state.status;
 
-    if (isSolo || !matchId || !myColor) return;
+    if (isLocalBotGame || !matchId || !myColor) return;
     if (state.status !== 'awaiting_roll' && state.status !== 'finished') return;
 
     const myIdx = state.players.findIndex((p) => p.color === myColor);
@@ -325,7 +344,7 @@ export default function GameScreen() {
       const nextEntry = mpPlayersRef.current?.find((p) => p.color === nextColor);
       pushBoardState(matchId, state, nextEntry?.user_id ?? null);
     }
-  }, [state.currentPlayerIdx, state.status, isSolo, matchId, myColor]);
+  }, [state.currentPlayerIdx, state.status, isLocalBotGame, matchId, myColor]);
 
   // ── handlers ──
 

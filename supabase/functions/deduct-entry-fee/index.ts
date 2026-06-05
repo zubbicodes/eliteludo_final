@@ -5,6 +5,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 interface RequestBody {
   entryFee: number;
+  metadata?: Record<string, unknown>;
 }
 
 // ── Handler ─────────────────────────────────────────────────────────────────────
@@ -33,7 +34,7 @@ serve(async (req) => {
     return new Response("Invalid entryFee", { status: 400, headers: cors });
   }
 
-  const { entryFee } = body;
+  const { entryFee, metadata = {} } = body;
 
   // If no entry fee, allow immediately
   if (entryFee === 0) {
@@ -90,10 +91,10 @@ serve(async (req) => {
   // Record transaction
   const { error: txErr } = await svc.from("transactions").insert({
     user_id: user.id,
-    type: "match_loss", // Using match_loss as a placeholder for entry fee deduction
+    type: "entry_fee",
     amount: -entryFee,
     currency: "coins",
-    metadata: { reason: "entry_fee" },
+    metadata: { reason: "entry_fee", ...metadata },
   });
 
   if (txErr) {
@@ -102,7 +103,12 @@ serve(async (req) => {
   }
 
   return new Response(
-    JSON.stringify({ success: true, deducted: entryFee, remaining: profile.coins - entryFee }),
+    JSON.stringify({
+      success: true,
+      deducted: entryFee,
+      remaining: profile.coins - entryFee,
+      queueToken: crypto.randomUUID(),
+    }),
     { headers: { ...cors, "Content-Type": "application/json" } },
   );
 });

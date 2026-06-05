@@ -76,7 +76,13 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   finishMoveAnim: () => {
-    const next = finishMove(get().state);
+    const state = get().state;
+    const move = state.lastMove;
+    const earnedBonusRoll = !!move && (move.captures.length > 0 || move.to.kind === 'finished');
+    let next = finishMove(state);
+    if (earnedBonusRoll && next.dicePool.length > 0 && next.status === 'awaiting_move') {
+      next = { ...next, status: 'awaiting_roll' };
+    }
     const moves =
       next.status === 'awaiting_move'
         ? getValidMoves(next, next.players[next.currentPlayerIdx].color)

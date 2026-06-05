@@ -30,6 +30,7 @@ import { useProfileStore } from '@/src/stores/profile';
 import { useWalletStore } from '@/src/stores/wallet';
 import { colors } from '@/src/theme/colors';
 import { haptics } from '@/src/utils/haptics';
+import { BannerAd, BannerAdSize, homeBannerAdUnitId } from '@/src/services/ads';
 
 const { width: W, height: H } = Dimensions.get('window');
 
@@ -130,6 +131,10 @@ export default function HomeScreen() {
       router.push('/game/new');
       return;
     }
+    if (mode === 'private') {
+      router.push('/game/private' as never);
+      return;
+    }
     setSelectedMode(mode);
     setView('clubs');
     setActiveClub(0);
@@ -137,12 +142,20 @@ export default function HomeScreen() {
 
   const playClub = useCallback(() => {
     haptics.tap();
+    const city = CITIES[activeClub];
     if (selectedMode === 'ai') {
       router.push({ pathname: '/game/new', params: { mode: '4p' } } as never);
       return;
     }
-    router.push({ pathname: '/game/matchmaking', params: { mode: selectedMode } } as never);
-  }, [router, selectedMode]);
+    router.push({
+      pathname: '/game/matchmaking',
+      params: {
+        mode: selectedMode,
+        entryFee: String(city.entry),
+        citySlug: city.id,
+      },
+    } as never);
+  }, [activeClub, router, selectedMode]);
 
   const scrollHandler = useAnimatedScrollHandler((e) => {
     scrollX.value = e.contentOffset.x;
@@ -174,6 +187,10 @@ export default function HomeScreen() {
           bottom={insets.bottom}
           onMode={openMode}
           onReward={() => setRewardOpen(true)}
+          onShop={() => {
+            haptics.tap();
+            router.push('/shop' as never);
+          }}
           coins={coins}
         />
       ) : (
@@ -205,6 +222,9 @@ export default function HomeScreen() {
         }}
         onClose={() => setRewardOpen(false)}
       />
+      <View style={styles.bannerAdWrap}>
+        <BannerAd unitId={homeBannerAdUnitId} size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER} />
+      </View>
     </View>
   );
 }
@@ -287,11 +307,13 @@ function ModesHome({
   bottom,
   onMode,
   onReward,
+  onShop,
   coins,
 }: {
   bottom: number;
   onMode: (mode: ModeId) => void;
   onReward: () => void;
+  onShop: () => void;
   coins: number;
 }) {
   const large = MODES.filter((m) => m.size === 'large');
@@ -307,7 +329,7 @@ function ModesHome({
         <View style={styles.eventRow}>
           <QuickTile icon="play" label="Free" badge="6" onPress={onReward} />
           <QuickTile icon="shield" label="Mega Win" badge="2h" />
-          <QuickTile icon="gift" label="Invite" badge="5" />
+          <QuickTile icon="gift" label="Shop" badge="+" onPress={onShop} />
         </View>
         <LinearGradient
           colors={['#4B270C', '#171006']}
@@ -1427,4 +1449,12 @@ const styles = StyleSheet.create({
   dot: { borderRadius: 4 },
   dotActive: { width: 22, height: 7 },
   dotIdle: { width: 7, height: 7, backgroundColor: 'rgba(255,255,255,0.24)' },
+  bannerAdWrap: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.25)',
+  },
 });

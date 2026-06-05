@@ -15,9 +15,6 @@ export const Images = {
   cityBrazil: require('../../assets/images/city-brazil.png'),
   cityDoha: require('../../assets/images/city-doha.png'),
 
-  // Board
-  board: require('../../assets/images/board.png'),
-
   // Logo
   logo: require('../../assets/images/logo-elite-ludo.png'),
 

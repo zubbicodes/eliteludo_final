@@ -14,6 +14,7 @@ import { haptics } from '@/src/utils/haptics';
 
 const MENU_ITEMS = [
   { label: 'Edit Profile', icon: 'person-outline' as const, route: '/edit-profile' },
+  { label: 'Shop', icon: 'storefront-outline' as const, route: '/shop' },
   { label: 'Achievements', icon: 'trophy-outline' as const, route: null },
   { label: 'Settings', icon: 'cog-outline' as const, route: '/settings' },
   { label: 'Help & Support', icon: 'help-circle-outline' as const, route: null },
@@ -28,7 +29,14 @@ export default function ProfileScreen() {
 
   useEffect(() => { hydrate(); }, [hydrate]);
 
-  const stats = { gamesPlayed: 12, wins: 8, crowns: 150, rank: 'Gold' };
+  const wins = profile?.wins ?? 0;
+  const losses = profile?.losses ?? 0;
+  const stats = {
+    gamesPlayed: wins + losses,
+    wins,
+    crowns: profile?.crownsUnlocked.length ?? 0,
+    rank: wins >= 25 ? 'Elite' : wins >= 10 ? 'Gold' : 'Bronze',
+  };
   const avatar = getAvatar(profile?.avatarId);
   const tokenColor = getTokenColor(profile?.colorId);
   const displayName = profile?.username ?? 'Player';

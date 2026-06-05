@@ -7,6 +7,9 @@ export type FindMatchResult = {
   matchId: string | null;
   matched: boolean;
   isBot?: boolean;
+  roomCode?: string;
+  refunded?: number;
+  reason?: string;
 };
 
 export type MatchRow = {
@@ -15,12 +18,16 @@ export type MatchRow = {
   current_turn_user_id: string;
   status: string;
   players: MatchPlayer[];
+  entry_fee: number;
+  city_slug?: string | null;
 };
 
 // ── Matchmaking ───────────────────────────────────────────────────────────────
 
 export async function findMatch(params: {
   entryFee: number;
+  mode?: '1v1' | '4p';
+  citySlug?: string;
   botFallback: boolean;
 }): Promise<FindMatchResult | null> {
   const { data, error } = await supabase.functions.invoke<FindMatchResult>(
@@ -34,12 +41,57 @@ export async function findMatch(params: {
   return data;
 }
 
+export async function cancelMatchmaking(params: {
+  entryFee: number;
+  mode?: '1v1' | '4p';
+}): Promise<FindMatchResult | null> {
+  const { data, error } = await supabase.functions.invoke<FindMatchResult>(
+    'find-match',
+    { body: { ...params, cancel: true } },
+  );
+  if (error) {
+    console.warn('[matches] cancel matchmaking error:', error.message);
+    return null;
+  }
+  return data;
+}
+
+export async function createPrivateRoom(params: {
+  entryFee: number;
+  citySlug?: string;
+}): Promise<FindMatchResult | null> {
+  const { data, error } = await supabase.functions.invoke<FindMatchResult>(
+    'find-match',
+    { body: { ...params, mode: 'private', privateAction: 'create' } },
+  );
+  if (error) {
+    console.warn('[matches] create private room error:', error.message);
+    return null;
+  }
+  return data;
+}
+
+export async function joinPrivateRoom(params: {
+  roomCode: string;
+  entryFee: number;
+}): Promise<FindMatchResult | null> {
+  const { data, error } = await supabase.functions.invoke<FindMatchResult>(
+    'find-match',
+    { body: { ...params, mode: 'private', privateAction: 'join' } },
+  );
+  if (error) {
+    console.warn('[matches] join private room error:', error.message);
+    return null;
+  }
+  return data;
+}
+
 // ── Match data ────────────────────────────────────────────────────────────────
 
 export async function getMatch(matchId: string): Promise<MatchRow | null> {
   const { data, error } = await supabase
     .from('matches')
-    .select('id, board_state, current_turn_user_id, status, players')
+    .select('id, board_state, current_turn_user_id, status, players, entry_fee, city_slug')
     .eq('id', matchId)
     .single();
   if (error) return null;

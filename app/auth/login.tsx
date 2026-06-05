@@ -2,7 +2,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { Link, useRouter } from 'expo-router';
 import { useState } from 'react';
 import {
-  Alert,
   ImageBackground,
   KeyboardAvoidingView,
   Platform,
@@ -21,6 +20,7 @@ import { SocialButton } from '@/src/components/SocialButton';
 import { Images } from '@/src/assets';
 import { supabase } from '@/src/supabase/client';
 import { getSupabaseErrorMessage } from '@/src/supabase/errors';
+import { signInWithGoogle } from '@/src/supabase/oauth';
 import { colors } from '@/src/theme/colors';
 import { spacing } from '@/src/theme/typography';
 import { haptics } from '@/src/utils/haptics';
@@ -54,8 +54,20 @@ export default function LoginScreen() {
     router.push('/auth/phone-login' as any);
   };
 
-  const onGoogleLogin = () => {
-    Alert.alert('Coming soon', 'Use email or phone for now.');
+  const onGoogleLogin = async () => {
+    haptics.tap();
+    setLoading(true);
+    setError(null);
+    try {
+      await signInWithGoogle();
+      haptics.success();
+      router.replace('/(tabs)/home');
+    } catch (caught) {
+      setError(getSupabaseErrorMessage(caught));
+      haptics.warning();
+    } finally {
+      setLoading(false);
+    }
   };
 
   const canSubmit = email.trim().length > 0 && password.length >= 6;

@@ -13,15 +13,24 @@ export type Profile = {
   avatarId: number;
   colorId: TokenColorId;
   coins: number;
+  gems: number;
+  wins: number;
+  losses: number;
+  crownsUnlocked: string[];
+  selectedTokenSkin: string;
+  selectedDiceSkin: string;
+  selectedCrown: string | null;
 };
 
-type ProfileInput = Omit<Profile, 'coins'> & Partial<Pick<Profile, 'coins'>>;
+type ProfileInput = Pick<Profile, 'username' | 'avatarId' | 'colorId'> &
+  Partial<Omit<Profile, 'username' | 'avatarId' | 'colorId'>>;
 
 type ProfileState = {
   profile: Profile | null;
   hydrated: boolean;
 
   hydrate: () => Promise<void>;
+  refresh: () => Promise<void>;
   setProfile: (p: ProfileInput) => Promise<void>;
   updateProfile: (patch: Partial<Profile>) => Promise<void>;
   clear: () => void;
@@ -48,15 +57,32 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
       avatar_id: number | null;
       color_id: string | null;
       coins: number | null;
+      gems: number | null;
+      wins: number | null;
+      losses: number | null;
+      crowns_unlocked: string[] | null;
+    } | null = null;
+    let cosmetics: {
+      selected_token_skin: string | null;
+      selected_dice_skin: string | null;
+      selected_crown: string | null;
+      unlocked_crowns: string[] | null;
     } | null = null;
 
     try {
       const result = await supabase
         .from('profiles')
-        .select('username, avatar_id, color_id, coins')
+        .select('username, avatar_id, color_id, coins, gems, wins, losses, crowns_unlocked')
         .eq('id', session.user.id)
         .single();
       data = result.data;
+
+      const cosmeticResult = await supabase
+        .from('profile_cosmetics')
+        .select('selected_token_skin, selected_dice_skin, selected_crown, unlocked_crowns')
+        .eq('user_id', session.user.id)
+        .maybeSingle();
+      cosmetics = cosmeticResult.data;
     } catch (error) {
       console.warn('[profile] hydrate failed:', getSupabaseErrorMessage(error));
     }
@@ -67,12 +93,24 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
           avatarId: data.avatar_id ?? 0,
           colorId: (data.color_id as TokenColorId) ?? 'red',
           coins: Number(data.coins ?? 1000),
+          gems: Number(data.gems ?? 0),
+          wins: Number(data.wins ?? 0),
+          losses: Number(data.losses ?? 0),
+          crownsUnlocked: cosmetics?.unlocked_crowns ?? data.crowns_unlocked ?? [],
+          selectedTokenSkin: cosmetics?.selected_token_skin ?? 'classic',
+          selectedDiceSkin: cosmetics?.selected_dice_skin ?? 'classic',
+          selectedCrown: cosmetics?.selected_crown ?? null,
         },
         hydrated: true,
       });
     } else {
       set({ hydrated: true });
     }
+  },
+
+  refresh: async () => {
+    set({ hydrated: false });
+    await get().hydrate();
   },
 
   setProfile: async (p) => {
@@ -82,6 +120,13 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
       avatarId: p.avatarId,
       colorId: p.colorId,
       coins: p.coins ?? current?.coins ?? 1000,
+      gems: p.gems ?? current?.gems ?? 0,
+      wins: p.wins ?? current?.wins ?? 0,
+      losses: p.losses ?? current?.losses ?? 0,
+      crownsUnlocked: p.crownsUnlocked ?? current?.crownsUnlocked ?? [],
+      selectedTokenSkin: p.selectedTokenSkin ?? current?.selectedTokenSkin ?? 'classic',
+      selectedDiceSkin: p.selectedDiceSkin ?? current?.selectedDiceSkin ?? 'classic',
+      selectedCrown: p.selectedCrown ?? current?.selectedCrown ?? null,
     };
     set({ profile: next });
     const {

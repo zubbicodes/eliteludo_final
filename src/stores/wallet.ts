@@ -18,6 +18,7 @@ type WalletState = {
   loading: boolean;
 
   hydrate: () => Promise<void>;
+  refresh: () => Promise<void>;
   refreshDailyStatus: () => Promise<void>;
   pendingClaim: () => PendingClaim | null;
   claimDaily: () => Promise<PendingClaim | null>;
@@ -42,6 +43,14 @@ export const useWalletStore = create<WalletState>((set, get) => ({
     } else {
       set({ hydrated: true });
     }
+  },
+
+  refresh: async () => {
+    const profileStore = useProfileStore.getState();
+    await profileStore.refresh();
+    const profile = useProfileStore.getState().profile;
+    set({ coins: profile?.coins ?? 0, hydrated: true });
+    await get().refreshDailyStatus();
   },
 
   refreshDailyStatus: async () => {

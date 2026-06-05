@@ -1,4 +1,5 @@
 import { router, useLocalSearchParams } from 'expo-router';
+import { useEffect, useState } from 'react';
 import { Image, ImageBackground, Pressable, StyleSheet, Text, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -6,6 +7,11 @@ import Animated, { FadeIn, FadeInDown, ZoomIn } from 'react-native-reanimated';
 
 import type { Color } from '@/src/game/types';
 import { Images } from '@/src/assets';
+import { supabase } from '@/src/supabase/client';
+import { getMatch } from '@/src/supabase/matches';
+import { awardMatchReward } from '@/src/supabase/transactions';
+import { useProfileStore } from '@/src/stores/profile';
+import { useWalletStore } from '@/src/stores/wallet';
 import { colors } from '@/src/theme/colors';
 import { spacing } from '@/src/theme/typography';
 
@@ -17,8 +23,48 @@ const PLAYER_HEX: Record<Color, string> = {
 };
 
 export default function ResultScreen() {
-  const { winner } = useLocalSearchParams<{ winner: Color }>();
+  const { winner, matchId, entryFee, citySlug } = useLocalSearchParams<{
+    winner: Color;
+    matchId?: string;
+    entryFee?: string;
+    citySlug?: string;
+  }>();
   const isHumanWin = winner === 'red';
+  const refreshWallet = useWalletStore((s) => s.refresh);
+  const refreshProfile = useProfileStore((s) => s.refresh);
+  const [settled, setSettled] = useState(false);
+
+  useEffect(() => {
+    const settle = async () => {
+      if (!matchId || matchId.startsWith('solo-') || !winner) return;
+      const [{ data: { session } }, match] = await Promise.all([
+        supabase.auth.getSession(),
+        getMatch(matchId),
+      ]);
+      if (!session || !match) return;
+      const winnerEntry = match.players.find((p) => p.color === winner);
+      if (!winnerEntry || winnerEntry.user_id.startsWith('bot-')) return;
+      const loserEntry = match.players.find((p) => p.user_id !== winnerEntry.user_id && !p.user_id.startsWith('bot-'));
+      await supabase
+        .from('matches')
+        .update({
+          status: 'finished',
+          winner_user_id: winnerEntry.user_id,
+          finished_at: new Date().toISOString(),
+        })
+        .eq('id', matchId);
+      await awardMatchReward({
+        matchId,
+        winnerUserId: winnerEntry.user_id,
+        loserUserId: loserEntry?.user_id,
+        entryFee: Number(entryFee ?? match.entry_fee ?? 0),
+        citySlug,
+      });
+      await Promise.all([refreshWallet(), refreshProfile()]);
+      setSettled(true);
+    };
+    settle().catch(() => setSettled(false));
+  }, [citySlug, entryFee, matchId, refreshProfile, refreshWallet, winner]);
 
   return (
     <ImageBackground source={Images.bgHome} style={styles.root} resizeMode="cover">
@@ -33,6 +79,9 @@ export default function ResultScreen() {
           <Text style={styles.subtitle}>
             {isHumanWin ? 'You roll like royalty.' : 'The throne is not yet yours.'}
           </Text>
+          {matchId && !matchId.startsWith('solo-') && (
+            <Text style={styles.settleText}>{settled ? 'Rewards settled' : 'Settling rewards...'}</Text>
+          )}
         </Animated.View>
 
         {/* Trophy / defeat icon */}
@@ -108,6 +157,12 @@ const styles = StyleSheet.create({
     fontSize: 15,
     letterSpacing: 2,
     fontWeight: '500',
+  },
+  settleText: {
+    color: 'rgba(212,175,55,0.65)',
+    fontSize: 12,
+    letterSpacing: 1,
+    fontWeight: '700',
   },
   trophyWrap: { alignItems: 'center', flex: 1, justifyContent: 'center' },
   trophy: { width: 220, height: 280 },

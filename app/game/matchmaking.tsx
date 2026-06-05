@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Image, ImageBackground, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Image, ImageBackground, Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, {
   FadeIn,
   FadeInDown,
@@ -17,6 +17,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Images } from '@/src/assets';
 import { useProfileStore } from '@/src/stores/profile';
+import { useWalletStore } from '@/src/stores/wallet';
+import { supabase } from '@/src/supabase/client';
+import { cancelMatchmaking, findMatch, subscribeQueue } from '@/src/supabase/matches';
+import { deductEntryFee } from '@/src/supabase/transactions';
 import { colors } from '@/src/theme/colors';
 
 const BOT_FALLBACK_MS = 10_000;
@@ -57,11 +61,18 @@ function RadarRing({ delay }: { delay: number }) {
 
 export default function MatchmakingScreen() {
   const router = useRouter();
-  const { mode } = useLocalSearchParams<{ mode?: string }>();
+  const { mode, entryFee, citySlug } = useLocalSearchParams<{
+    mode?: string;
+    entryFee?: string;
+    citySlug?: string;
+  }>();
   const insets = useSafeAreaInsets();
   const profile = useProfileStore((s) => s.profile);
+  const refreshWallet = useWalletStore((s) => s.refresh);
   const gameMode = mode === '4p' ? '4p' : '2p';
+  const queueMode = gameMode === '4p' ? '4p' : '1v1';
   const targetPlayerCount = gameMode === '4p' ? 4 : 2;
+  const fee = Number(entryFee ?? 0);
 
   const pulseScale = useSharedValue(1);
   const [label, setLabel] = useState('Searching...');
@@ -69,6 +80,9 @@ export default function MatchmakingScreen() {
   const navigatedRef = useRef(false);
   const fallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const elapsedRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const unsubscribeQueueRef = useRef<(() => void) | null>(null);
+  const queueStartedRef = useRef(false);
+  const entryDeductedRef = useRef(false);
 
   const navigate = useCallback((matchId: string) => {
     if (navigatedRef.current) return;
@@ -79,10 +93,10 @@ export default function MatchmakingScreen() {
     setTimeout(() => {
       router.replace({
         pathname: '/game/[matchId]',
-        params: { matchId, mode: gameMode },
+        params: { matchId, mode: gameMode, entryFee: String(fee), citySlug },
       } as never);
     }, 350);
-  }, [gameMode, router]);
+  }, [citySlug, fee, gameMode, router]);
 
   useEffect(() => {
     pulseScale.value = withRepeat(
@@ -95,16 +109,63 @@ export default function MatchmakingScreen() {
 
     elapsedRef.current = setInterval(() => setElapsed((n) => n + 1), 1000);
 
-    fallbackRef.current = setTimeout(() => {
-      setLabel('Matching with computer...');
-      navigate(`solo-${Date.now()}`);
-    }, BOT_FALLBACK_MS);
+    const startQueue = async () => {
+      if (queueStartedRef.current) return;
+      queueStartedRef.current = true;
+
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        Alert.alert('Sign in required', 'Please sign in again before matchmaking.');
+        router.replace('/auth/login');
+        return;
+      }
+
+      if (fee > 0) {
+        const feeResult = await deductEntryFee(fee, { mode: queueMode, city_slug: citySlug });
+        if (!feeResult?.success) {
+          Alert.alert('Not enough coins', 'Collect a daily reward or visit the shop to get more coins.');
+          router.back();
+          return;
+        }
+        entryDeductedRef.current = true;
+        await refreshWallet();
+      }
+
+      unsubscribeQueueRef.current = subscribeQueue(session.user.id, (matchId) => navigate(matchId));
+      const result = await findMatch({
+        entryFee: fee,
+        mode: queueMode,
+        citySlug,
+        botFallback: false,
+      });
+      if (result?.matchId) {
+        navigate(result.matchId);
+        return;
+      }
+
+      fallbackRef.current = setTimeout(async () => {
+        setLabel('Matching with computer...');
+        const fallback = await findMatch({
+          entryFee: fee,
+          mode: queueMode,
+          citySlug,
+          botFallback: true,
+        });
+        navigate(fallback?.matchId ?? `solo-${Date.now()}`);
+      }, BOT_FALLBACK_MS);
+    };
+
+    startQueue().catch(() => {
+      Alert.alert('Matchmaking failed', 'Please try again.');
+      router.back();
+    });
 
     return () => {
       clearInterval(elapsedRef.current!);
       clearTimeout(fallbackRef.current!);
+      unsubscribeQueueRef.current?.();
     };
-  }, [navigate, pulseScale]);
+  }, [citySlug, fee, navigate, pulseScale, queueMode, refreshWallet, router]);
 
   const pulseStyle = useAnimatedStyle(() => ({
     transform: [{ scale: pulseScale.value }],
@@ -132,7 +193,13 @@ export default function MatchmakingScreen() {
         style={[styles.header, { paddingTop: insets.top + 12 }]}
       >
         <Pressable
-          onPress={() => router.back()}
+          onPress={async () => {
+            if (entryDeductedRef.current && !navigatedRef.current) {
+              await cancelMatchmaking({ entryFee: fee, mode: queueMode });
+              await refreshWallet();
+            }
+            router.back();
+          }}
           style={styles.backBtn}
           hitSlop={8}
         >
@@ -227,7 +294,13 @@ export default function MatchmakingScreen() {
         style={[styles.cancelWrap, { paddingBottom: insets.bottom + 20 }]}
       >
         <Pressable
-          onPress={() => router.back()}
+          onPress={async () => {
+            if (entryDeductedRef.current && !navigatedRef.current) {
+              await cancelMatchmaking({ entryFee: fee, mode: queueMode });
+              await refreshWallet();
+            }
+            router.back();
+          }}
           style={({ pressed }) => [styles.cancelBtn, pressed && { opacity: 0.7 }]}
         >
           <Text style={styles.cancelText}>CANCEL</Text>

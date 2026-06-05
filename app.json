@@ -30,6 +30,13 @@
     "plugins": [
       "expo-router",
       [
+        "react-native-google-mobile-ads",
+        {
+          "androidAppId": "ca-app-pub-3940256099942544~3347511713",
+          "iosAppId": "ca-app-pub-3940256099942544~3347511713"
+        }
+      ],
+      [
         "expo-splash-screen",
         {
           "image": "./assets/images/splash-icon.png",
@@ -39,6 +46,15 @@
         }
       ]
     ],
+    "extra": {
+      "adMob": {
+        "homeBannerAdUnitId": "ca-app-pub-3940256099942544/6300978111",
+        "rewardedAdUnitId": "ca-app-pub-3940256099942544/5224354917"
+      },
+      "iap": {
+        "coinPackProductId": "elite_ludo_coin_pack_1000"
+      }
+    },
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
