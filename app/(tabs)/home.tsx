@@ -87,6 +87,22 @@ const CITIES: City[] = [
   { id: 'berlin', name: 'BERLIN', subtitle: 'Grand Master', entry: 10_000, prize: 30_000, online: 980, accentColor: '#4A9ED4', background: Images.cityBerlin, crown: Images.clubCrownDesert },
 ];
 
+function rewardErrorMessage(reason: string) {
+  if (reason === 'already_collected') {
+    return 'You already collected today\'s reward. Come back tomorrow for the next one.';
+  }
+  if (/collect_daily_reward_for_user|function/i.test(reason)) {
+    return 'Daily rewards are not deployed correctly yet. Apply the latest Supabase migration and redeploy the reward function.';
+  }
+  if (/unauthorized|jwt|session/i.test(reason)) {
+    return 'Your session expired. Please sign in again and try collecting the reward.';
+  }
+  if (/network|fetch|reach supabase|internet|dns/i.test(reason)) {
+    return 'Cannot reach Supabase. Check your connection and Supabase project URL.';
+  }
+  return reason;
+}
+
 function fmt(n: number) {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(n >= 10_000 ? 1 : 0)}K`;
@@ -98,6 +114,7 @@ export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const coins = useWalletStore((s) => s.coins);
   const hydrated = useWalletStore((s) => s.hydrated);
+  const dailyStatus = useWalletStore((s) => s.dailyStatus);
   const hydrateWallet = useWalletStore((s) => s.hydrate);
   const refreshWallet = useWalletStore((s) => s.refresh);
   const claimDaily = useWalletStore((s) => s.claimDaily);
@@ -126,7 +143,14 @@ export default function HomeScreen() {
       setPendingDay(p.day);
       setRewardOpen(true);
     }
-  }, [dismissedRewardDay, hydrated, pendingClaim, rewardOpen]);
+  }, [
+    dailyStatus?.canCollect,
+    dailyStatus?.dayNumber,
+    dismissedRewardDay,
+    hydrated,
+    pendingClaim,
+    rewardOpen,
+  ]);
 
   const openMode = useCallback((mode: ModeId) => {
     haptics.tap();
@@ -197,7 +221,15 @@ export default function HomeScreen() {
         <ModesHome
           bottom={insets.bottom}
           onMode={openMode}
-          onReward={() => setRewardOpen(true)}
+          onReward={() => {
+            const p = pendingClaim();
+            if (!p) {
+              Alert.alert('Reward already collected', 'Come back tomorrow for the next daily reward.');
+              return;
+            }
+            setPendingDay(p.day);
+            setRewardOpen(true);
+          }}
           onShop={() => {
             haptics.tap();
             router.push('/shop' as never);
@@ -227,12 +259,12 @@ export default function HomeScreen() {
           if (claiming) return;
           setClaiming(true);
           const r = await claimDaily();
-          if (r) {
+          if (r.success) {
             haptics.success();
             setDismissedRewardDay(r.day);
             setRewardOpen(false);
           } else {
-            Alert.alert('Reward not collected', 'Please check your connection and try again.');
+            Alert.alert('Reward not collected', rewardErrorMessage(r.reason));
           }
           setClaiming(false);
         }}

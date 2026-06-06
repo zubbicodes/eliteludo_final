@@ -69,7 +69,7 @@ export default function SplashScreen() {
     }, TIP_MS);
 
     return () => { if (tipTimer.current) clearInterval(tipTimer.current); };
-  }, []);
+  }, [glowOpacity, hydrateSettings, progress]);
 
   useEffect(() => {
     if (!splashDone || isHydrating) return;

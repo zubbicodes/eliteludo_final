@@ -1,4 +1,5 @@
 import { supabase } from './client';
+import { getSupabaseErrorMessage } from './errors';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -21,6 +22,40 @@ export type CollectDailyRewardResult = {
   nextAvailable?: string;
   reason?: string;
 };
+
+async function readFunctionError(error: unknown): Promise<CollectDailyRewardResult | null> {
+  const context = (error as { context?: unknown }).context;
+  const response = context as {
+    clone?: () => { json?: () => Promise<unknown>; text?: () => Promise<string> };
+    json?: () => Promise<unknown>;
+    text?: () => Promise<string>;
+  } | undefined;
+
+  if (!response) return null;
+
+  const jsonResponse = typeof response.clone === 'function' ? response.clone() : response;
+  if (typeof jsonResponse.json === 'function') {
+    try {
+      const body = await jsonResponse.json();
+      if (body && typeof body === 'object' && 'success' in body) {
+        return body as CollectDailyRewardResult;
+      }
+    } catch {
+      // Fall through to text parsing below.
+    }
+  }
+
+  if (typeof response.text === 'function') {
+    try {
+      const text = await response.text();
+      if (text) return { success: false, reason: text };
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
+}
 
 export type AwardMatchRewardResult = {
   success: boolean;
@@ -79,8 +114,10 @@ export async function collectDailyReward(): Promise<CollectDailyRewardResult | n
     { body: {} },
   );
   if (error) {
-    console.warn('[transactions] collect-daily-reward error:', error.message);
-    return null;
+    const body = await readFunctionError(error);
+    const fallback = getSupabaseErrorMessage(error);
+    console.warn('[transactions] collect-daily-reward error:', body?.reason ?? fallback);
+    return body ?? { success: false, reason: fallback };
   }
   return data;
 }
@@ -95,40 +132,56 @@ export type DailyRewardStatus = {
   nextAvailable: string | null;
 };
 
+function isSameUtcDay(a: Date, b: Date): boolean {
+  return (
+    a.getUTCFullYear() === b.getUTCFullYear() &&
+    a.getUTCMonth() === b.getUTCMonth() &&
+    a.getUTCDate() === b.getUTCDate()
+  );
+}
+
+function nextUtcMidnightIso(from = new Date()): string {
+  return new Date(Date.UTC(
+    from.getUTCFullYear(),
+    from.getUTCMonth(),
+    from.getUTCDate() + 1,
+  )).toISOString();
+}
+
 export async function getDailyRewardStatus(): Promise<DailyRewardStatus | null> {
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+
+  if (authError || !user) {
+    console.warn('[transactions] get daily rewards auth error:', authError?.message ?? 'no session');
+    return null;
+  }
+
   const { data, error } = await supabase
     .from('daily_rewards')
     .select('*')
-    .single();
+    .eq('user_id', user.id)
+    .maybeSingle();
 
   if (error) {
     console.warn('[transactions] get daily rewards error:', error.message);
     return null;
   }
 
+  if (!data) return null;
+
   const now = new Date();
   const lastCollected = data.last_collected_at ? new Date(data.last_collected_at) : null;
-  const isSameDay =
-    lastCollected &&
-    lastCollected.getFullYear() === now.getFullYear() &&
-    lastCollected.getMonth() === now.getMonth() &&
-    lastCollected.getDate() === now.getDate();
-
-  // Calculate next available time
-  let nextAvailable: string | null = null;
-  if (isSameDay) {
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    tomorrow.setHours(0, 0, 0, 0);
-    nextAvailable = tomorrow.toISOString();
-  }
+  const isSameDay = !!lastCollected && isSameUtcDay(lastCollected, now);
 
   return {
     dayNumber: data.day_number,
     lastCollectedAt: data.last_collected_at,
     streakActive: data.streak_active,
     canCollect: !isSameDay,
-    nextAvailable,
+    nextAvailable: isSameDay ? nextUtcMidnightIso(now) : null,
   };
 }
 

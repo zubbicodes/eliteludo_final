@@ -22,4 +22,18 @@ export const supabase = createClient(url ?? 'http://localhost', key ?? 'public-a
   },
 });
 
+supabase.auth.getSession().then(({ data }) => {
+  if (data.session?.access_token) {
+    supabase.realtime.setAuth(data.session.access_token);
+  }
+}).catch((error) => {
+  console.warn('[supabase] realtime auth init failed:', error);
+});
+
+supabase.auth.onAuthStateChange((_event, session) => {
+  if (session?.access_token) {
+    supabase.realtime.setAuth(session.access_token);
+  }
+});
+
 export const supabaseConfigured = Boolean(url && key);

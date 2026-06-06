@@ -98,7 +98,7 @@ export function Token({
     bounce.value = 0;
     tx.value = withDelay(delayMs, withTiming(targetX, { duration: 320 }));
     ty.value = withDelay(delayMs, withTiming(targetY, { duration: 320 }));
-  }, [hopKey, cx, cy, size, hopMs, delayMs]);
+  }, [hopKey, hopPath, cx, cy, size, hopMs, delayMs, tx, ty, bounce]);
 
   useEffect(() => {
     glow.value = withTiming(highlighted ? 1 : 0, { duration: 200 });

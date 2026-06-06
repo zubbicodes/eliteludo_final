@@ -8,6 +8,7 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Alert,
   ImageBackground,
   Pressable,
   StyleSheet,
@@ -29,8 +30,10 @@ import { supabase } from '@/src/supabase/client';
 import { getSupabaseErrorMessage } from '@/src/supabase/errors';
 import {
   getMatch,
+  forfeitMatch,
   pushBoardState,
   rollDiceServer,
+  skipRollTurnServer,
   subscribeMatch,
 } from '@/src/supabase/matches';
 import { BoardCanvas } from '@/src/skia/Board';
@@ -51,7 +54,10 @@ const PLAYER_HEX: Record<Color, string> = {
 };
 
 const THINK_MS = 700;
-const ROLL_ANIM_MS = 600;
+const ROLL_ANIM_MS = 360;
+const MP_ROLL_SETTLE_MS = 120;
+const ROLL_TIMEOUT_MS = 5000;
+const ROLL_TIMER_TICK_MS = 100;
 const HOP_MS = 130;
 const MIN_MOVE_MS = 220;
 const CAPTURE_TAIL_MS = 260;
@@ -77,12 +83,14 @@ export default function GameScreen() {
   const loadGame = useGameStore((s) => s.loadGame);
   const beginRoll = useGameStore((s) => s.beginRoll);
   const finishRoll = useGameStore((s) => s.finishRoll);
+  const skipRollTurn = useGameStore((s) => s.skipRollTurn);
   const selectMove = useGameStore((s) => s.selectMove);
   const finishMoveAnim = useGameStore((s) => s.finishMoveAnim);
 
   const [pickerForToken, setPickerForToken] = useState<TokenId | null>(null);
   const [bursts, setBursts] = useState<Burst[]>([]);
   const [displayDiceValue, setDisplayDiceValue] = useState<number | null>(null);
+  const [rollTimerRemaining, setRollTimerRemaining] = useState(ROLL_TIMEOUT_MS);
 
   const profile = useProfileStore((s) => s.profile);
   const hydrateProfile = useProfileStore((s) => s.hydrate);
@@ -95,6 +103,9 @@ export default function GameScreen() {
   const mpPlayersRef = useRef<MatchPlayer[] | null>(null);
   const prevPlayerIdxRef = useRef(-1);
   const prevStatusRef = useRef(state.status);
+  const leavingRef = useRef(false);
+  const suppressNextSyncRef = useRef(false);
+  const timeoutInFlightRef = useRef(false);
 
   useEffect(() => { stateRef.current = state; }, [state]);
   useEffect(() => { myColorRef.current = myColor; }, [myColor]);
@@ -115,7 +126,7 @@ export default function GameScreen() {
       ? { name: profile.username, avatarId: profile.avatarId }
       : undefined;
     newGame(humanColor, gameMode === '2p' ? 1 : 3, human);
-  }, [isSoloMatchId, matchId, gameMode, newGame, profile?.colorId, profile?.username, profile?.avatarId]);
+  }, [isSoloMatchId, matchId, gameMode, newGame, profile]);
 
   // ── Effect: Multiplayer init - load from DB and subscribe to Realtime. ──
   useEffect(() => {
@@ -129,6 +140,7 @@ export default function GameScreen() {
         return { data: { session: null } };
       });
       if (!session) return;
+      supabase.realtime.setAuth(session.access_token);
 
       const match = await getMatch(matchId);
       if (!match) return;
@@ -165,13 +177,53 @@ export default function GameScreen() {
 
     init();
     return () => { unsubscribeRealtime?.(); };
-  }, [isSoloMatchId, matchId]);
+  }, [isSoloMatchId, matchId, loadGame]);
+
+  // Realtime should be the fast path, but polling prevents a stuck board if a
+  // mobile socket drops or the channel fails to join.
+  useEffect(() => {
+    if (isSoloMatchId || !matchId || !myColor) return;
+
+    let cancelled = false;
+    const poll = async () => {
+      const match = await getMatch(matchId);
+      if (cancelled || !match) return;
+
+      const s = stateRef.current;
+      const mc = myColorRef.current;
+      if (mc) {
+        const myIdx = s.players.findIndex((p) => p.color === mc);
+        if (
+          s.currentPlayerIdx === myIdx &&
+          (s.status === 'rolling' ||
+            s.status === 'awaiting_move' ||
+            s.status === 'animating')
+        ) {
+          return;
+        }
+      }
+
+      loadGame(match.board_state);
+    };
+
+    const interval = setInterval(poll, 1800);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [isSoloMatchId, matchId, myColor, loadGame]);
 
   const currentPlayer: Player | undefined = state.players[state.currentPlayerIdx];
 
   const isMyTurn = isLocalBotGame
     ? !!currentPlayer && !currentPlayer.isAI
     : !!currentPlayer && currentPlayer.color === myColor;
+
+  const shouldRunRollTimer =
+    state.status === 'awaiting_roll' &&
+    !state.winnerColor &&
+    !!currentPlayer &&
+    (isLocalBotGame ? isMyTurn : !!matchId && !!myColor);
 
   // ── Effect: dice tumble has played out - settle the value. ──
   // Solo: use local RNG after a fixed timeout.
@@ -190,22 +242,90 @@ export default function GameScreen() {
       return () => clearTimeout(t);
     }
 
-    // Multiplayer: fire EF, settle after at least ROLL_ANIM_MS
+    // Multiplayer: server owns the dice and returns the authoritative board state.
     let cancelled = false;
     const startAt = Date.now();
     rollDiceServer(matchId!).then((result) => {
       if (cancelled) return;
-      const wait = Math.max(0, ROLL_ANIM_MS - (Date.now() - startAt));
+      const wait = Math.max(0, MP_ROLL_SETTLE_MS - (Date.now() - startAt));
       setTimeout(() => {
         if (cancelled) return;
-        const value = finishRoll(result?.value);
-        setDisplayDiceValue(value);
+        if (!result) {
+          loadGame({ ...stateRef.current, status: 'awaiting_roll' });
+          Alert.alert('Roll failed', 'Please try again.');
+          return;
+        }
+        if (typeof result.value !== 'number') {
+          if (result.boardState) {
+            suppressNextSyncRef.current = true;
+            prevPlayerIdxRef.current = result.boardState.currentPlayerIdx;
+            prevStatusRef.current = result.boardState.status;
+            loadGame(result.boardState);
+            return;
+          }
+          loadGame({ ...stateRef.current, status: 'awaiting_roll' });
+          return;
+        }
+        setDisplayDiceValue(result.value);
+        if (result.boardState) {
+          suppressNextSyncRef.current = true;
+          prevPlayerIdxRef.current = result.boardState.currentPlayerIdx;
+          prevStatusRef.current = result.boardState.status;
+          loadGame(result.boardState);
+        } else {
+          finishRoll(result.value);
+        }
         haptics.medium();
         sound.play('roll');
       }, wait);
     });
     return () => { cancelled = true; };
-  }, [state.status, isMyTurn, isLocalBotGame, matchId, finishRoll]);
+  }, [state.status, isMyTurn, isLocalBotGame, matchId, finishRoll, loadGame]);
+
+  // ── Effect: roll timer - skip turn if a player does not roll in time. ──
+  useEffect(() => {
+    timeoutInFlightRef.current = false;
+    setRollTimerRemaining(ROLL_TIMEOUT_MS);
+
+    if (!shouldRunRollTimer) return;
+
+    const startedAt = Date.now();
+    const turnPlayerIdx = state.currentPlayerIdx;
+    const tick = async () => {
+      const remaining = Math.max(0, ROLL_TIMEOUT_MS - (Date.now() - startedAt));
+      setRollTimerRemaining(remaining);
+      if (remaining > 0 || timeoutInFlightRef.current) return;
+
+      timeoutInFlightRef.current = true;
+      haptics.warning();
+      if (isLocalBotGame) {
+        if (isMyTurn) skipRollTurn();
+        return;
+      }
+
+      if (!matchId) return;
+      const result = await skipRollTurnServer(matchId, turnPlayerIdx);
+      if (result?.boardState) {
+        suppressNextSyncRef.current = true;
+        prevPlayerIdxRef.current = result.boardState.currentPlayerIdx;
+        prevStatusRef.current = result.boardState.status;
+        loadGame(result.boardState);
+      }
+    };
+
+    const interval = setInterval(tick, ROLL_TIMER_TICK_MS);
+    tick();
+    return () => clearInterval(interval);
+  }, [
+    shouldRunRollTimer,
+    state.currentPlayerIdx,
+    isLocalBotGame,
+    isMyTurn,
+    matchId,
+    myColor,
+    skipRollTurn,
+    loadGame,
+  ]);
 
   // ── Effect: AI is awaiting_roll - schedule a roll (solo only). ──
   useEffect(() => {
@@ -282,7 +402,7 @@ export default function GameScreen() {
       });
     }, 1500);
     return () => clearTimeout(t);
-  }, [state.winnerColor, boardSize, isLocalBotGame, myColor, matchId, entryFee, citySlug]);
+  }, [state.winnerColor, state.players, boardSize, isLocalBotGame, myColor, matchId, entryFee, citySlug]);
 
   // ── Effect: capture -> particle burst. ──
   useEffect(() => {
@@ -334,6 +454,11 @@ export default function GameScreen() {
     prevStatusRef.current = state.status;
 
     if (isLocalBotGame || !matchId || !myColor) return;
+    if (suppressNextSyncRef.current) {
+      suppressNextSyncRef.current = false;
+      prevPlayerIdxRef.current = state.currentPlayerIdx;
+      return;
+    }
     if (state.status !== 'awaiting_roll' && state.status !== 'finished') return;
 
     const myIdx = state.players.findIndex((p) => p.color === myColor);
@@ -348,7 +473,7 @@ export default function GameScreen() {
       const nextEntry = mpPlayersRef.current?.find((p) => p.color === nextColor);
       pushBoardState(matchId, state, nextEntry?.user_id ?? null);
     }
-  }, [state.currentPlayerIdx, state.status, isLocalBotGame, matchId, myColor]);
+  }, [state, isLocalBotGame, matchId, myColor]);
 
   // ── handlers ──
 
@@ -390,6 +515,34 @@ export default function GameScreen() {
   }
 
   // ── derived ──
+  async function leaveMatch() {
+    if (leavingRef.current) return;
+    leavingRef.current = true;
+    haptics.tap();
+
+    if (!isLocalBotGame && matchId && !state.winnerColor) {
+      await forfeitMatch(matchId);
+    }
+
+    router.back();
+  }
+
+  function onExitPress() {
+    if (isLocalBotGame || state.winnerColor) {
+      leaveMatch();
+      return;
+    }
+
+    Alert.alert(
+      'Leave match?',
+      'Leaving gives the win to your opponent.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Leave', style: 'destructive', onPress: leaveMatch },
+      ],
+    );
+  }
+
   const allTokens = useMemo(
     () => state.players.flatMap((p) => p.tokens),
     [state.players],
@@ -439,6 +592,8 @@ export default function GameScreen() {
   const bottomRight = isTwoPlayerGame ? undefined : byColor.get('yellow');
   const rollLabel = state.dicePool.length > 0 ? 'ROLL AGAIN' : 'ROLL';
   const hint = makeHint(state, isMyTurn, currentPlayer);
+  const timerProgress = shouldRunRollTimer ? rollTimerRemaining / ROLL_TIMEOUT_MS : null;
+  const timerSeconds = shouldRunRollTimer ? Math.ceil(rollTimerRemaining / 1000) : null;
 
   if (!currentPlayer) return null;
 
@@ -449,7 +604,7 @@ export default function GameScreen() {
       </ImageBackground>
 
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={12} style={styles.exitBtn}>
+        <Pressable onPress={onExitPress} hitSlop={12} style={styles.exitBtn}>
           <Text style={styles.back}>EXIT</Text>
         </Pressable>
         <View style={styles.turnBadge}>
@@ -538,6 +693,8 @@ export default function GameScreen() {
         canRoll={isMyTurn && state.status === 'awaiting_roll' && !state.winnerColor}
         rollLabel={rollLabel}
         onRoll={onHumanRoll}
+        timerProgress={timerProgress}
+        timerSeconds={timerSeconds}
         hint={hint}
       />
     </SafeAreaView>

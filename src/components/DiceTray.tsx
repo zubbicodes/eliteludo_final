@@ -19,6 +19,8 @@ type Props = {
   /** Label for the button - "ROLL" first, "ROLL AGAIN" after a 6. */
   rollLabel: string;
   onRoll: () => void;
+  timerProgress?: number | null;
+  timerSeconds?: number | null;
   /** Optional caption shown below the tray. */
   hint?: string;
 };
@@ -30,8 +32,12 @@ export function DiceTray({
   canRoll,
   rollLabel,
   onRoll,
+  timerProgress = null,
+  timerSeconds = null,
   hint,
 }: Props) {
+  const showTimer = timerProgress !== null && timerSeconds !== null;
+
   return (
     <View style={styles.container}>
       <LinearGradient
@@ -75,6 +81,17 @@ export function DiceTray({
           </LinearGradient>
         </Pressable>
         <View style={styles.ornamentRight} />
+        {showTimer && (
+          <View style={styles.timerTrack} pointerEvents="none">
+            <View
+              style={[
+                styles.timerFill,
+                { width: `${Math.max(0, Math.min(1, timerProgress)) * 100}%` },
+              ]}
+            />
+            <Text style={styles.timerText}>{timerSeconds}s</Text>
+          </View>
+        )}
       </LinearGradient>
       {hint ? <Text style={styles.hint}>{hint}</Text> : <View style={styles.hintSpacer} />}
     </View>
@@ -190,6 +207,29 @@ const styles = StyleSheet.create({
     textShadowColor: '#2A0C05',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 2,
+  },
+  timerTrack: {
+    position: 'absolute',
+    left: 12,
+    right: 12,
+    bottom: 5,
+    height: 5,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    overflow: 'hidden',
+  },
+  timerFill: {
+    height: '100%',
+    borderRadius: 999,
+    backgroundColor: colors.goldLight,
+  },
+  timerText: {
+    position: 'absolute',
+    right: 0,
+    bottom: 7,
+    color: colors.goldLight,
+    fontSize: 10,
+    fontWeight: '900',
   },
   hint: { ...typography.caption, color: colors.textMuted, height: 16 },
   hintSpacer: { height: 16 },

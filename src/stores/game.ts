@@ -33,6 +33,7 @@ type GameStore = {
    * Returns the value that was rolled.
    */
   finishRoll: (externalValue?: number) => number;
+  skipRollTurn: () => void;
   /** Apply a chosen move + die. status: awaiting_move → animating. */
   selectMove: (move: MoveOption) => void;
   /** Settle the move animation. Decides next state. */
@@ -49,8 +50,13 @@ export const useGameStore = create<GameStore>((set, get) => ({
       validMoves: [],
     }),
 
-  loadGame: (gameState) =>
-    set({ state: gameState, validMoves: [] }),
+  loadGame: (gameState) => {
+    const moves =
+      gameState.status === 'awaiting_move'
+        ? getValidMoves(gameState, gameState.players[gameState.currentPlayerIdx].color)
+        : [];
+    set({ state: gameState, validMoves: moves });
+  },
 
   beginRoll: () =>
     set((s) => ({ state: { ...s.state, status: 'rolling' } })),
@@ -68,6 +74,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
     }
     set({ state: next, validMoves: moves });
     return value;
+  },
+
+  skipRollTurn: () => {
+    const next = advanceToNextPlayer({ ...get().state, dicePool: [] });
+    set({ state: next, validMoves: [] });
   },
 
   selectMove: (move) => {

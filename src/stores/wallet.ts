@@ -10,6 +10,9 @@ import { useProfileStore } from './profile';
 export const DAILY_REWARDS = [100, 150, 200, 300, 400, 500, 1000] as const;
 
 export type PendingClaim = { day: number; reward: number };
+export type ClaimDailyResult =
+  | { success: true; day: number; reward: number }
+  | { success: false; reason: string };
 
 type WalletState = {
   coins: number;
@@ -21,7 +24,7 @@ type WalletState = {
   refresh: () => Promise<void>;
   refreshDailyStatus: () => Promise<void>;
   pendingClaim: () => PendingClaim | null;
-  claimDaily: () => Promise<PendingClaim | null>;
+  claimDaily: () => Promise<ClaimDailyResult>;
 };
 
 export const useWalletStore = create<WalletState>((set, get) => ({
@@ -68,16 +71,32 @@ export const useWalletStore = create<WalletState>((set, get) => ({
 
   claimDaily: async () => {
     const pending = get().pendingClaim();
-    if (!pending) return null;
+    if (!pending) return { success: false, reason: 'already_collected' };
 
     const result = await collectDailyReward();
     if (result?.success) {
+      set({
+        coins: result.balance ?? get().coins + (result.rewardAmount ?? pending.reward),
+        dailyStatus: {
+          dayNumber: result.dayNumber ? Math.min(result.dayNumber + 1, 7) : pending.day,
+          lastCollectedAt: new Date().toISOString(),
+          streakActive: result.streakActive ?? true,
+          canCollect: false,
+          nextAvailable: result.nextAvailable ?? null,
+        },
+      });
       await get().refresh();
       return {
+        success: true,
         day: result.dayNumber ?? pending.day,
         reward: result.rewardAmount ?? pending.reward,
       };
     }
-    return null;
+
+    if (result?.reason === 'already_collected') {
+      await get().refresh();
+    }
+
+    return { success: false, reason: result?.reason ?? 'unknown_error' };
   },
 }));

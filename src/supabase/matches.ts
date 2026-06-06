@@ -1,5 +1,5 @@
 import { supabase } from './client';
-import type { MatchBoardState, MatchPlayer } from '../game/types';
+import type { Color, MatchBoardState, MatchPlayer } from '../game/types';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -20,6 +20,29 @@ export type MatchRow = {
   players: MatchPlayer[];
   entry_fee: number;
   city_slug?: string | null;
+  winner_user_id?: string | null;
+  finished_at?: string | null;
+};
+
+export type RollDiceResult = {
+  success?: boolean;
+  value?: number;
+  boardState?: MatchBoardState;
+  reason?: string;
+};
+
+export type ForfeitMatchResult = {
+  success: boolean;
+  winnerUserId?: string;
+  winnerColor?: Color;
+  reason?: string;
+};
+
+export type SkipRollTurnResult = {
+  success: boolean;
+  boardState?: MatchBoardState;
+  currentTurnUserId?: string;
+  reason?: string;
 };
 
 // ── Matchmaking ───────────────────────────────────────────────────────────────
@@ -91,7 +114,7 @@ export async function joinPrivateRoom(params: {
 export async function getMatch(matchId: string): Promise<MatchRow | null> {
   const { data, error } = await supabase
     .from('matches')
-    .select('id, board_state, current_turn_user_id, status, players, entry_fee, city_slug')
+    .select('id, board_state, current_turn_user_id, status, players, entry_fee, city_slug, winner_user_id, finished_at')
     .eq('id', matchId)
     .single();
   if (error) return null;
@@ -103,22 +126,54 @@ export async function pushBoardState(
   boardState: MatchBoardState,
   nextTurnUserId: string | null,
 ): Promise<void> {
-  const patch: Record<string, unknown> = { board_state: boardState };
-  if (nextTurnUserId) patch.current_turn_user_id = nextTurnUserId;
-  await supabase.from('matches').update(patch).eq('id', matchId);
+  const { error } = await supabase.functions.invoke('sync-board-state', {
+    body: { matchId, boardState, nextTurnUserId },
+  });
+  if (error) {
+    console.warn('[matches] sync-board-state error:', error.message);
+  }
 }
 
 // ── Server dice roll ──────────────────────────────────────────────────────────
 
 export async function rollDiceServer(
   matchId: string,
-): Promise<{ value: number } | null> {
-  const { data, error } = await supabase.functions.invoke<{ value: number }>(
+): Promise<RollDiceResult | null> {
+  const { data, error } = await supabase.functions.invoke<RollDiceResult>(
     'roll-dice',
     { body: { matchId } },
   );
   if (error) {
     console.warn('[matches] roll-dice error:', error.message);
+    return null;
+  }
+  return data;
+}
+
+export async function forfeitMatch(
+  matchId: string,
+): Promise<ForfeitMatchResult | null> {
+  const { data, error } = await supabase.functions.invoke<ForfeitMatchResult>(
+    'forfeit-match',
+    { body: { matchId } },
+  );
+  if (error) {
+    console.warn('[matches] forfeit-match error:', error.message);
+    return null;
+  }
+  return data;
+}
+
+export async function skipRollTurnServer(
+  matchId: string,
+  expectedPlayerIdx?: number,
+): Promise<SkipRollTurnResult | null> {
+  const { data, error } = await supabase.functions.invoke<SkipRollTurnResult>(
+    'skip-roll-turn',
+    { body: { matchId, expectedPlayerIdx } },
+  );
+  if (error) {
+    console.warn('[matches] skip-roll-turn error:', error.message);
     return null;
   }
   return data;
@@ -145,7 +200,11 @@ export function subscribeMatch(
         if (newState) onUpdate(newState);
       },
     )
-    .subscribe();
+    .subscribe((status, error) => {
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        console.warn('[matches] realtime match channel status:', status, error?.message);
+      }
+    });
 
   return () => { supabase.removeChannel(channel); };
 }
