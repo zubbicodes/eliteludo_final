@@ -40,6 +40,9 @@ serve(async (req) => {
   } catch {
     return json({ success: false, reason: "matchId and boardState required" }, 400);
   }
+  if (boardState.status === "animating") {
+    return json({ success: false, reason: "Refusing transient animation state" });
+  }
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const svc = createClient(

@@ -6,7 +6,7 @@
 // timer and cleans up on state change to avoid timer-clobber bugs.
 
 import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   ImageBackground,
@@ -31,6 +31,7 @@ import { getSupabaseErrorMessage } from '@/src/supabase/errors';
 import {
   getMatch,
   forfeitMatch,
+  moveTokenServer,
   pushBoardState,
   rollDiceServer,
   skipRollTurnServer,
@@ -58,6 +59,7 @@ const ROLL_ANIM_MS = 360;
 const MP_ROLL_SETTLE_MS = 120;
 const ROLL_TIMEOUT_MS = 5000;
 const ROLL_TIMER_TICK_MS = 100;
+const LOCAL_MOVE_COMMIT_GRACE_MS = 5000;
 const HOP_MS = 130;
 const MIN_MOVE_MS = 220;
 const CAPTURE_TAIL_MS = 260;
@@ -106,6 +108,8 @@ export default function GameScreen() {
   const leavingRef = useRef(false);
   const suppressNextSyncRef = useRef(false);
   const timeoutInFlightRef = useRef(false);
+  const localMovePendingRef = useRef(false);
+  const localMoveReleaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => { stateRef.current = state; }, [state]);
   useEffect(() => { myColorRef.current = myColor; }, [myColor]);
@@ -117,6 +121,43 @@ export default function GameScreen() {
   const boardSize = Math.min(width - spacing.md * 2, 380);
   const cellPx = boardSize / BOARD_SIZE;
   const tokenSize = cellPx * 0.98;
+
+  const holdLocalMoveCommit = useCallback(() => {
+    localMovePendingRef.current = true;
+    if (localMoveReleaseTimerRef.current) clearTimeout(localMoveReleaseTimerRef.current);
+    localMoveReleaseTimerRef.current = setTimeout(() => {
+      localMovePendingRef.current = false;
+      localMoveReleaseTimerRef.current = null;
+    }, LOCAL_MOVE_COMMIT_GRACE_MS);
+  }, []);
+
+  const releaseLocalMoveCommit = useCallback(() => {
+    localMovePendingRef.current = false;
+    if (localMoveReleaseTimerRef.current) {
+      clearTimeout(localMoveReleaseTimerRef.current);
+      localMoveReleaseTimerRef.current = null;
+    }
+  }, []);
+
+  const shouldHydrateRemoteBoard = useCallback(() => {
+    if (localMovePendingRef.current) return false;
+
+    const s = stateRef.current;
+    const mc = myColorRef.current;
+    if (!mc) return true;
+
+    const myIdx = s.players.findIndex((p) => p.color === mc);
+    return !(
+      s.currentPlayerIdx === myIdx &&
+      (s.status === 'rolling' ||
+        s.status === 'awaiting_move' ||
+        s.status === 'animating')
+    );
+  }, []);
+
+  useEffect(() => () => {
+    if (localMoveReleaseTimerRef.current) clearTimeout(localMoveReleaseTimerRef.current);
+  }, []);
 
   // ── Effect: Solo init - new game when mount or profile settles. ──
   useEffect(() => {
@@ -157,27 +198,14 @@ export default function GameScreen() {
       loadGame(match.board_state);
 
       unsubscribeRealtime = subscribeMatch(matchId, (newBoardState) => {
-        const s = stateRef.current;
-        const mc = myColorRef.current;
-        // Don't overwrite local state while I'm actively playing my turn
-        if (mc) {
-          const myIdx = s.players.findIndex((p) => p.color === mc);
-          if (
-            s.currentPlayerIdx === myIdx &&
-            (s.status === 'rolling' ||
-              s.status === 'awaiting_move' ||
-              s.status === 'animating')
-          ) {
-            return;
-          }
-        }
+        if (!shouldHydrateRemoteBoard()) return;
         loadGame(newBoardState);
       });
     };
 
     init();
     return () => { unsubscribeRealtime?.(); };
-  }, [isSoloMatchId, matchId, loadGame]);
+  }, [isSoloMatchId, matchId, loadGame, shouldHydrateRemoteBoard]);
 
   // Realtime should be the fast path, but polling prevents a stuck board if a
   // mobile socket drops or the channel fails to join.
@@ -189,19 +217,7 @@ export default function GameScreen() {
       const match = await getMatch(matchId);
       if (cancelled || !match) return;
 
-      const s = stateRef.current;
-      const mc = myColorRef.current;
-      if (mc) {
-        const myIdx = s.players.findIndex((p) => p.color === mc);
-        if (
-          s.currentPlayerIdx === myIdx &&
-          (s.status === 'rolling' ||
-            s.status === 'awaiting_move' ||
-            s.status === 'animating')
-        ) {
-          return;
-        }
-      }
+      if (!shouldHydrateRemoteBoard()) return;
 
       loadGame(match.board_state);
     };
@@ -211,7 +227,7 @@ export default function GameScreen() {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [isSoloMatchId, matchId, myColor, loadGame]);
+  }, [isSoloMatchId, matchId, myColor, loadGame, shouldHydrateRemoteBoard]);
 
   const currentPlayer: Player | undefined = state.players[state.currentPlayerIdx];
 
@@ -359,12 +375,39 @@ export default function GameScreen() {
     const base = Math.max(MIN_MOVE_MS, hops * HOP_MS);
     const total = base + (move?.captures.length ? CAPTURE_TAIL_MS : 0);
     const landAt = move?.captures.length ? null : setTimeout(() => haptics.light(), base);
-    const t = setTimeout(() => finishMoveAnim(), total);
+    const t = setTimeout(() => {
+      if (!isLocalBotGame && isMyTurn && matchId && move) {
+        void moveTokenServer(matchId, move.tokenId, move.dieValue).then((result) => {
+          if (result?.boardState) {
+            suppressNextSyncRef.current = true;
+            prevPlayerIdxRef.current = result.boardState.currentPlayerIdx;
+            prevStatusRef.current = result.boardState.status;
+            loadGame(result.boardState);
+          } else {
+            void getMatch(matchId).then((match) => {
+              if (match) loadGame(match.board_state);
+            });
+          }
+          releaseLocalMoveCommit();
+        });
+        return;
+      }
+      finishMoveAnim();
+    }, total);
     return () => {
       clearTimeout(t);
       if (landAt) clearTimeout(landAt);
     };
-  }, [state.status, state.lastMove, finishMoveAnim]);
+  }, [
+    state.status,
+    state.lastMove,
+    isLocalBotGame,
+    isMyTurn,
+    matchId,
+    finishMoveAnim,
+    loadGame,
+    releaseLocalMoveCommit,
+  ]);
 
   // ── Effect: winner -> celebrate, then navigate to result. ──
   useEffect(() => {
@@ -459,21 +502,30 @@ export default function GameScreen() {
       prevPlayerIdxRef.current = state.currentPlayerIdx;
       return;
     }
-    if (state.status !== 'awaiting_roll' && state.status !== 'finished') return;
+    if (
+      state.status !== 'awaiting_roll' &&
+      state.status !== 'awaiting_move' &&
+      state.status !== 'finished'
+    ) {
+      return;
+    }
 
     const myIdx = state.players.findIndex((p) => p.color === myColor);
     const prev = prevPlayerIdxRef.current;
     prevPlayerIdxRef.current = state.currentPlayerIdx;
 
-    const earnedSamePlayerBonus = prevStatus === 'animating' && state.currentPlayerIdx === myIdx;
+    const completedLocalMove = prevStatus === 'animating' && prev === myIdx;
 
-    // Push when my turn ends, or when my move earned a bonus roll and turn stays with me.
-    if (prev === myIdx && (state.currentPlayerIdx !== myIdx || earnedSamePlayerBonus)) {
+    // Push after every local move settles, and when my turn ends.
+    if (prev === myIdx && (state.currentPlayerIdx !== myIdx || completedLocalMove)) {
       const nextColor = state.players[state.currentPlayerIdx].color;
       const nextEntry = mpPlayersRef.current?.find((p) => p.color === nextColor);
-      pushBoardState(matchId, state, nextEntry?.user_id ?? null);
+      void pushBoardStateWithRetry(matchId, state, nextEntry?.user_id ?? null)
+        .then((synced) => {
+          if (synced) releaseLocalMoveCommit();
+        });
     }
-  }, [state, isLocalBotGame, matchId, myColor]);
+  }, [state, isLocalBotGame, matchId, myColor, releaseLocalMoveCommit]);
 
   // ── handlers ──
 
@@ -496,6 +548,7 @@ export default function GameScreen() {
     const uniqueValues = Array.from(new Set(opts.map((o) => o.dieValue)));
     if (uniqueValues.length === 1) {
       setPickerForToken(null);
+      if (!isLocalBotGame) holdLocalMoveCommit();
       selectMove(opts[0]);
       return;
     }
@@ -510,6 +563,7 @@ export default function GameScreen() {
     setPickerForToken(null);
     if (move) {
       haptics.tap();
+      if (!isLocalBotGame) holdLocalMoveCommit();
       selectMove(move);
     }
   }
@@ -741,6 +795,23 @@ function ProfileRow({
 function hopsForMove(from: { kind: string }, dieValue: number): number {
   if (from.kind === 'home') return 1;
   return dieValue;
+}
+
+async function pushBoardStateWithRetry(
+  matchId: string,
+  state: ReturnType<typeof useGameStore.getState>['state'],
+  nextTurnUserId: string | null,
+): Promise<boolean> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const synced = await pushBoardState(matchId, state, nextTurnUserId);
+    if (synced) return true;
+    await delay(350 * (attempt + 1));
+  }
+  return false;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function makeHint(
