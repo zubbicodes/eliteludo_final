@@ -48,8 +48,8 @@ import { Token as TokenView } from '@/src/skia/Token';
 import { haptics } from '@/src/utils/haptics';
 import { sound } from '@/src/utils/sound';
 import { useProfileStore } from '@/src/stores/profile';
+import type { Profile } from '@/src/stores/profile';
 import { chooseMove, useGameStore } from '@/src/stores/game';
-import { useWalletStore } from '@/src/stores/wallet';
 import { colors } from '@/src/theme/colors';
 import { spacing, typography } from '@/src/theme/typography';
 
@@ -98,10 +98,10 @@ export default function GameScreen() {
   const [pickerForToken, setPickerForToken] = useState<TokenId | null>(null);
   const [bursts, setBursts] = useState<Burst[]>([]);
   const [rollTimerRemaining, setRollTimerRemaining] = useState(ROLL_TIMEOUT_MS);
+  const [statsPlayer, setStatsPlayer] = useState<Player | null>(null);
 
   const profile = useProfileStore((s) => s.profile);
   const hydrateProfile = useProfileStore((s) => s.hydrate);
-  const coins = useWalletStore((s) => s.coins);
 
   // ── Multiplayer-specific state ──
   const [myColor, setMyColor] = useState<Color | null>(null);
@@ -623,7 +623,6 @@ export default function GameScreen() {
       </ImageBackground>
 
       <TopHud
-        coins={coins}
         gems={profile?.gems ?? 0}
         matchId={matchId ?? 'local'}
         onExit={onExitPress}
@@ -637,6 +636,7 @@ export default function GameScreen() {
             active={currentPlayer.color === player.color}
             lastRoll={state.lastRollByColor[player.color] ?? null}
             style={index === 0 ? styles.sideSeatLeft : styles.sideSeatRight}
+            onPress={() => setStatsPlayer(player)}
           />
         ))}
         {opponentPlayer && (
@@ -645,6 +645,7 @@ export default function GameScreen() {
             active={currentPlayer.color === opponentPlayer.color}
             lastRoll={state.lastRollByColor[opponentPlayer.color] ?? null}
             dice={currentPlayer.color === opponentPlayer.color ? activeDiceProps : null}
+            onProfilePress={() => setStatsPlayer(opponentPlayer)}
           />
         )}
       </View>
@@ -698,8 +699,16 @@ export default function GameScreen() {
         lastRoll={localPlayer ? state.lastRollByColor[localPlayer.color] ?? null : null}
         dice={localPlayer && currentPlayer.color === localPlayer.color ? activeDiceProps : null}
         canUndo={state.status === 'awaiting_move' && isMyTurn}
+        onProfilePress={() => setStatsPlayer(localPlayer ?? null)}
       />
       <Text style={styles.hint}>{hint}</Text>
+      {statsPlayer && (
+        <PlayerStatsModal
+          player={statsPlayer}
+          profile={statsPlayer.color === localPlayer?.color ? profile : null}
+          onClose={() => setStatsPlayer(null)}
+        />
+      )}
     </SafeAreaView>
   );
 }
@@ -715,12 +724,10 @@ type DiceHudProps = {
 };
 
 function TopHud({
-  coins,
   gems,
   matchId,
   onExit,
 }: {
-  coins: number;
   gems: number;
   matchId: string;
   onExit: () => void;
@@ -735,7 +742,6 @@ function TopHud({
       <View style={styles.resources}>
         <ResourcePill icon="flash" value="2" />
         <ResourcePill icon="diamond" value={gems.toLocaleString()} plus />
-        <ResourcePill image={Images.coinSingle} value={coins.toLocaleString()} />
       </View>
       <Text style={styles.matchChip}>#{matchId.slice(-6)}</Text>
     </View>
@@ -799,16 +805,18 @@ function RemoteSeat({
   active,
   lastRoll,
   dice,
+  onProfilePress,
 }: {
   player: Player;
   active: boolean;
   lastRoll: number | null;
   dice: DiceHudProps | null;
+  onProfilePress: () => void;
 }) {
   return (
     <View style={styles.remoteSeat}>
       <DiceBubble dice={dice} value={lastRoll} active={active} remote />
-      <PlayerAvatar player={player} active={active} size={66} />
+      <PlayerAvatar player={player} active={active} size={66} onPress={onProfilePress} />
       <Text style={styles.remoteName} numberOfLines={1}>{player.name}</Text>
     </View>
   );
@@ -819,15 +827,17 @@ function MiniSeat({
   active,
   lastRoll,
   style,
+  onPress,
 }: {
   player: Player;
   active: boolean;
   lastRoll: number | null;
   style: ViewStyle;
+  onPress: () => void;
 }) {
   return (
     <View style={[styles.miniSeat, style]}>
-      <PlayerAvatar player={player} active={active} size={44} />
+      <PlayerAvatar player={player} active={active} size={44} onPress={onPress} />
       <View style={styles.miniDie}>
         <Text style={styles.miniDieText}>{lastRoll ?? '-'}</Text>
       </View>
@@ -841,12 +851,14 @@ function LocalCommandBar({
   lastRoll,
   dice,
   canUndo,
+  onProfilePress,
 }: {
   player?: Player;
   active: boolean;
   lastRoll: number | null;
   dice: DiceHudProps | null;
   canUndo: boolean;
+  onProfilePress: () => void;
 }) {
   if (!player) return <View style={styles.localBarPlaceholder} />;
 
@@ -854,7 +866,7 @@ function LocalCommandBar({
     <View style={styles.localBar}>
       <Text style={styles.localName} numberOfLines={1}>{player.name}</Text>
       <View style={styles.localControls}>
-        <PlayerAvatar player={player} active={active} size={72} />
+        <PlayerAvatar player={player} active={active} size={72} onPress={onProfilePress} />
         <DiceBubble dice={dice} value={lastRoll} active={active} />
         <View style={styles.quickStack}>
           <Pressable disabled={!canUndo} style={[styles.quickButton, !canUndo && styles.quickButtonDisabled]}>
@@ -963,14 +975,19 @@ function PlayerAvatar({
   player,
   active,
   size,
+  onPress,
 }: {
   player: Player;
   active: boolean;
   size: number;
+  onPress?: () => void;
 }) {
   const avatar = getAvatar(player.avatarId);
   return (
-    <View
+    <Pressable
+      onPress={onPress}
+      disabled={!onPress}
+      hitSlop={8}
       style={[
         styles.avatarShell,
         {
@@ -985,6 +1002,81 @@ function PlayerAvatar({
         <Ionicons name={avatar.icon} size={size * 0.46} color="#fff" />
       </View>
       <View style={[styles.playerColorRing, { backgroundColor: PLAYER_HEX[player.color] }]} />
+    </Pressable>
+  );
+}
+
+function PlayerStatsModal({
+  player,
+  profile,
+  onClose,
+}: {
+  player: Player;
+  profile: Profile | null;
+  onClose: () => void;
+}) {
+  const wins = profile?.wins ?? 0;
+  const losses = profile?.losses ?? 0;
+  const games = wins + losses;
+  const winRate = games > 0 ? Math.round((wins / games) * 100) : 0;
+  const finished = player.tokens.filter((token) => token.location.kind === 'finished').length;
+  const league = wins >= 50 ? 'Elite' : wins >= 25 ? 'Gold' : wins >= 10 ? 'Silver' : 'Bronze';
+
+  return (
+    <View style={styles.modalOverlay}>
+      <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+      <View style={styles.statsCard}>
+        <Pressable onPress={onClose} hitSlop={10} style={styles.closeButton}>
+          <Ionicons name="close" size={26} color="#fff" />
+        </Pressable>
+
+        <View style={styles.statsHeader}>
+          <PlayerAvatar player={player} active size={78} />
+          <View style={styles.statsIdentity}>
+            <Text style={styles.statsName} numberOfLines={1}>{player.name}</Text>
+            <View style={styles.countryRow}>
+              <Text style={styles.flagText}>PK</Text>
+              <Text style={styles.countryText}>Pakistan</Text>
+            </View>
+          </View>
+          <View style={[styles.statsColorDot, { backgroundColor: PLAYER_HEX[player.color] }]} />
+        </View>
+
+        <View style={styles.featureBadge}>
+          <Dice size={70} value={null} rolling={false} />
+          <Text style={styles.featureText}>ELITE</Text>
+        </View>
+
+        <View style={styles.statsGrid}>
+          <StatBox label="Coins" value={profile ? profile.coins.toLocaleString() : 'Hidden'} />
+          <StatBox label="Gems" value={profile ? profile.gems.toLocaleString() : 'Hidden'} />
+          <StatBox label="Games" value={games > 0 ? games.toLocaleString() : 'N/A'} />
+          <StatBox label="Wins" value={wins > 0 ? wins.toLocaleString() : 'N/A'} />
+          <StatBox label="Win Rate" value={games > 0 ? `${winRate}%` : 'N/A'} />
+          <StatBox label="Losses" value={losses > 0 ? losses.toLocaleString() : 'N/A'} />
+          <StatBox label="Tokens Home" value={`${finished}/4`} />
+          <StatBox label="League" value={profile ? league : 'Rival'} />
+        </View>
+
+        <View style={styles.statsFooter}>
+          <Pressable style={styles.reportButton}>
+            <Ionicons name="warning" size={24} color="#fff" />
+          </Pressable>
+          <Pressable style={styles.muteButton}>
+            <Ionicons name="chatbubble-ellipses" size={20} color="#143400" />
+            <Text style={styles.muteText}>MUTE</Text>
+          </Pressable>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+function StatBox({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.statBox}>
+      <Text style={styles.statLabel}>{label}</Text>
+      <Text style={styles.statValue}>{value}</Text>
     </View>
   );
 }
@@ -1420,6 +1512,192 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: '900',
     fontSize: 16,
+  },
+  modalOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 100,
+    elevation: 100,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 18,
+    backgroundColor: 'rgba(0,0,0,0.68)',
+  },
+  statsCard: {
+    width: '100%',
+    maxWidth: 390,
+    maxHeight: '86%',
+    borderRadius: 24,
+    padding: 16,
+    paddingTop: 18,
+    backgroundColor: '#2A0827',
+    borderWidth: 3,
+    borderColor: colors.gold,
+    shadowColor: '#000',
+    shadowOpacity: 0.6,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 24,
+  },
+  closeButton: {
+    position: 'absolute',
+    right: -10,
+    top: -13,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#E92B35',
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.72)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.45,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 12,
+  },
+  statsHeader: {
+    minHeight: 90,
+    borderRadius: 18,
+    padding: 10,
+    paddingRight: 48,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+  },
+  statsIdentity: {
+    flex: 1,
+    minWidth: 0,
+  },
+  statsName: {
+    color: '#fff',
+    fontSize: 21,
+    fontWeight: '900',
+  },
+  countryRow: {
+    marginTop: 7,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+  },
+  flagText: {
+    minWidth: 25,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: 4,
+    overflow: 'hidden',
+    color: '#fff',
+    backgroundColor: '#0A7B36',
+    fontSize: 11,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+  countryText: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
+  statsColorDot: {
+    position: 'absolute',
+    right: 14,
+    top: 18,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: '#fff',
+  },
+  featureBadge: {
+    alignSelf: 'center',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginVertical: 14,
+    width: 132,
+    minHeight: 118,
+    borderRadius: 22,
+    backgroundColor: 'rgba(0,0,0,0.18)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  featureText: {
+    marginTop: 7,
+    color: colors.goldLight,
+    fontSize: 20,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+  statsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 9,
+    padding: 11,
+    borderRadius: 18,
+    backgroundColor: 'rgba(0,0,0,0.22)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  statBox: {
+    width: '48%',
+    minHeight: 58,
+    borderRadius: 11,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    backgroundColor: 'rgba(12,2,20,0.54)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+    justifyContent: 'center',
+  },
+  statLabel: {
+    color: 'rgba(255,255,255,0.72)',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  statValue: {
+    marginTop: 3,
+    color: '#fff',
+    fontSize: 17,
+    fontWeight: '900',
+  },
+  statsFooter: {
+    marginTop: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  reportButton: {
+    width: 58,
+    height: 50,
+    borderRadius: 15,
+    backgroundColor: 'rgba(255,255,255,0.14)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  muteButton: {
+    height: 50,
+    minWidth: 126,
+    paddingHorizontal: 18,
+    borderRadius: 15,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#79D929',
+    borderWidth: 2,
+    borderColor: '#B7FF73',
+    shadowColor: '#143400',
+    shadowOpacity: 0.35,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 10,
+  },
+  muteText: {
+    color: '#143400',
+    fontSize: 16,
+    fontWeight: '900',
   },
   hint: {
     ...typography.caption,
