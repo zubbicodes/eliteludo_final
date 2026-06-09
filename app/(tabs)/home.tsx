@@ -8,7 +8,6 @@ import {
   Image,
   ImageBackground,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -30,6 +29,7 @@ import { Images } from '@/src/assets';
 import { useProfileStore } from '@/src/stores/profile';
 import { useWalletStore } from '@/src/stores/wallet';
 import { colors } from '@/src/theme/colors';
+import { fontFamilies } from '@/src/theme/typography';
 import { haptics } from '@/src/utils/haptics';
 import { BannerAd, BannerAdSize, homeBannerAdUnitId } from '@/src/services/ads';
 
@@ -51,6 +51,7 @@ type Mode = {
   icon: keyof typeof Ionicons.glyphMap;
   colors: [string, string];
   size: 'large' | 'small';
+  image?: ImageSourcePropType;
 };
 
 type City = {
@@ -66,11 +67,11 @@ type City = {
 };
 
 const MODES: Mode[] = [
-  { id: '2p', label: '2 Player', sub: 'Classic duel', icon: 'dice', colors: ['#F4BA22', '#A75A08'], size: 'large' },
-  { id: '4p', label: '4 Player', sub: 'Royal table', icon: 'people', colors: ['#8260DE', '#432A98'], size: 'large' },
-  { id: 'private', label: 'Private Table', sub: 'Invite code', icon: 'heart', colors: ['#7A4FD0', '#392070'], size: 'small' },
-  { id: 'team', label: 'Team Up', sub: 'Online', icon: 'globe', colors: ['#7A4FD0', '#392070'], size: 'small' },
-  { id: 'friends', label: 'Friends', sub: 'Party table', icon: 'chatbubbles', colors: ['#7A4FD0', '#392070'], size: 'small' },
+  { id: '2p', label: '2 Player', sub: 'Classic duel', icon: 'dice', colors: ['#F4BA22', '#A75A08'], size: 'large', image: Images.lobbyCardTwoPlayer },
+  { id: '4p', label: '4 Player', sub: 'Royal table', icon: 'people', colors: ['#8260DE', '#432A98'], size: 'large', image: Images.lobbyCardFourPlayer },
+  { id: 'private', label: 'Private Table', sub: 'Invite code', icon: 'heart', colors: ['#7A4FD0', '#392070'], size: 'small', image: Images.lobbyCardPrivateTable },
+  { id: 'team', label: 'Team Up Online', sub: 'Online', icon: 'globe', colors: ['#7A4FD0', '#392070'], size: 'small', image: Images.lobbyCardTeamUpOnline },
+  { id: 'friends', label: 'Team Up Friends', sub: 'Party table', icon: 'chatbubbles', colors: ['#7A4FD0', '#392070'], size: 'small', image: Images.lobbyCardTeamUpFriends },
   { id: 'ai', label: 'Practice', sub: 'Vs computer', icon: 'desktop', colors: ['#4C8C55', '#1E572A'], size: 'small' },
 ];
 
@@ -292,7 +293,7 @@ function Header({
   onSettings: () => void;
 }) {
   return (
-    <Animated.View entering={FadeIn.duration(300)} style={[styles.header, { paddingTop: top + 10 }]}>
+    <Animated.View entering={FadeIn.duration(300)} style={[styles.header, { paddingTop: top + 4 }]}>
       <View style={styles.avatarWrap}>
         <LinearGradient colors={['#5A351C', '#130602']} style={styles.avatarRing}>
           <Text style={styles.avatarInitial}>{username.charAt(0).toUpperCase()}</Text>
@@ -368,13 +369,10 @@ function ModesHome({
   coins: number;
 }) {
   const large = MODES.filter((m) => m.size === 'large');
-  const small = MODES.filter((m) => m.size === 'small');
+  const small = MODES.filter((m) => m.size === 'small' && m.id !== 'ai');
 
   return (
-    <ScrollView
-      showsVerticalScrollIndicator={false}
-      contentContainerStyle={[styles.modeScroll, { paddingBottom: bottom + 96 }]}
-    >
+    <View style={[styles.modeScreen, { paddingBottom: bottom + 154 }]}>
       <Animated.View entering={FadeInDown.delay(80).duration(360)} style={styles.brandArea}>
         <Image source={Images.logo} style={styles.logoWatermark} resizeMode="contain" />
         <View style={styles.eventRow}>
@@ -412,7 +410,7 @@ function ModesHome({
           <ModeCard key={mode.id} mode={mode} onPress={() => onMode(mode.id)} />
         ))}
       </Animated.View>
-    </ScrollView>
+    </View>
   );
 }
 
@@ -448,19 +446,28 @@ function ModeCard({ mode, onPress }: { mode: Mode; onPress: () => void }) {
         pressed && { transform: [{ scale: 0.97 }] },
       ]}
     >
-      <LinearGradient colors={mode.colors} style={StyleSheet.absoluteFill} />
-      <View style={styles.modeGlow} />
-      <View style={styles.modeTopSheen} />
-      <ModeScene mode={mode} />
-      {!isLarge && (
-        <View style={styles.smallModeBadge}>
-          <Ionicons name={mode.icon} size={22} color="#fff" />
-        </View>
+      {!mode.image && <LinearGradient colors={mode.colors} style={StyleSheet.absoluteFill} />}
+      {mode.image ? (
+        <Image
+          source={mode.image}
+          style={styles.modeCardImage}
+          resizeMode="cover"
+        />
+      ) : (
+        <>
+          <View style={styles.modeGlow} />
+          <View style={styles.modeTopSheen} />
+          <ModeScene mode={mode} />
+          {!isLarge && (
+            <View style={styles.smallModeBadge}>
+              <Ionicons name={mode.icon} size={22} color="#fff" />
+            </View>
+          )}
+          <View style={isLarge ? styles.modeLabelPlateLarge : styles.modeLabelPlateSmall}>
+            <Text style={isLarge ? styles.modeLabelLarge : styles.modeLabelSmall}>{mode.label}</Text>
+          </View>
+        </>
       )}
-      <View style={isLarge ? styles.modeLabelPlateLarge : styles.modeLabelPlateSmall}>
-        <Text style={isLarge ? styles.modeLabelLarge : styles.modeLabelSmall}>{mode.label}</Text>
-        <Text style={styles.modeSub}>{mode.sub}</Text>
-      </View>
     </Pressable>
   );
 }
@@ -472,15 +479,30 @@ function ModeScene({ mode }: { mode: Mode }) {
       <View style={large ? styles.modeSceneLarge : styles.modeSceneSmall}>
         <Text style={large ? styles.modeNumberBig : styles.modeNumberSmall}>2</Text>
         <LudoPlate
-          size={large ? 104 : 64}
-          x={large ? 24 : 8}
-          y={large ? 28 : 14}
+          size={large ? (COMPACT_CLUB ? 88 : 104) : 64}
+          x={large ? (COMPACT_CLUB ? 34 : 24) : 8}
+          y={large ? (COMPACT_CLUB ? 18 : 28) : 14}
           rotate="-8deg"
           colors={['#2F9BFF', '#3CC857', '#E64758', '#F5D245']}
         />
-        <TokenDisc color="#2E9EFF" x={large ? 18 : 8} y={large ? 38 : 19} size={large ? 48 : 32} />
-        <TokenDisc color="#E54558" x={large ? 96 : 54} y={large ? 38 : 20} size={large ? 48 : 32} />
-        <DiceBlock x={large ? 60 : 34} y={large ? 78 : 45} size={large ? 54 : 36} value={2} />
+        <TokenDisc
+          color="#2E9EFF"
+          x={large ? (COMPACT_CLUB ? 28 : 18) : 8}
+          y={large ? (COMPACT_CLUB ? 30 : 38) : 19}
+          size={large ? (COMPACT_CLUB ? 40 : 48) : 32}
+        />
+        <TokenDisc
+          color="#E54558"
+          x={large ? (COMPACT_CLUB ? 94 : 96) : 54}
+          y={large ? (COMPACT_CLUB ? 30 : 38) : 20}
+          size={large ? (COMPACT_CLUB ? 40 : 48) : 32}
+        />
+        <DiceBlock
+          x={large ? (COMPACT_CLUB ? 66 : 60) : 34}
+          y={large ? (COMPACT_CLUB ? 62 : 78) : 45}
+          size={large ? (COMPACT_CLUB ? 42 : 54) : 36}
+          value={2}
+        />
       </View>
     );
   }
@@ -802,25 +824,25 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#080104' },
   bgTint: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(16,2,6,0.82)',
+    backgroundColor: 'rgba(9,5,2,0.86)',
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 18,
-    paddingBottom: 8,
+    paddingBottom: 2,
     gap: 12,
     zIndex: 5,
   },
   avatarWrap: {
-    width: 88,
-    height: 88,
+    width: 76,
+    height: 76,
     justifyContent: 'center',
   },
   avatarRing: {
-    width: 68,
-    height: 68,
-    borderRadius: 34,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
     borderWidth: 2,
     borderColor: colors.gold,
     alignItems: 'center',
@@ -828,8 +850,9 @@ const styles = StyleSheet.create({
   },
   avatarInitial: {
     color: '#fff',
+    fontFamily: fontFamilies.heading,
     fontSize: 28,
-    fontWeight: '900',
+    fontWeight: '400',
   },
   levelBadge: {
     position: 'absolute',
@@ -845,7 +868,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(212,175,55,0.35)',
   },
-  levelText: { color: '#fff', fontWeight: '900', fontSize: 12 },
+  levelText: { color: '#fff', fontFamily: fontFamilies.heading, fontWeight: '400', fontSize: 12 },
   walletRow: {
     flex: 1,
     flexDirection: 'row',
@@ -858,7 +881,9 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.36)',
+    backgroundColor: 'rgba(14,8,3,0.72)',
+    borderWidth: 1,
+    borderColor: 'rgba(212,175,55,0.26)',
     paddingLeft: 3,
     paddingRight: 12,
     gap: 5,
@@ -896,7 +921,7 @@ const styles = StyleSheet.create({
     borderColor: '#B8FFBB',
     transform: [{ rotate: '-10deg' }],
   },
-  currencyText: { color: '#fff', fontWeight: '900', fontSize: 15 },
+  currencyText: { color: '#fff', fontFamily: fontFamilies.heading, fontWeight: '400', fontSize: 15 },
   plusBubble: {
     width: 20,
     height: 20,
@@ -910,22 +935,29 @@ const styles = StyleSheet.create({
   settingsBtn: {
     width: 42,
     height: 42,
+    borderRadius: 16,
+    backgroundColor: 'rgba(14,8,3,0.66)',
+    borderWidth: 1,
+    borderColor: 'rgba(212,175,55,0.24)',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  modeScroll: {
+  modeScreen: {
+    flex: 1,
     paddingHorizontal: 18,
-    paddingTop: 6,
+    paddingTop: 0,
+    justifyContent: 'space-between',
   },
   brandArea: {
-    minHeight: 232,
+    minHeight: COMPACT_CLUB ? 188 : 226,
     alignItems: 'center',
+    justifyContent: 'flex-start',
   },
   logoWatermark: {
     position: 'absolute',
-    top: 64,
-    width: 190,
-    height: 190,
+    top: COMPACT_CLUB ? 46 : 58,
+    width: COMPACT_CLUB ? 150 : 178,
+    height: COMPACT_CLUB ? 150 : 178,
     opacity: 0.1,
   },
   eventRow: {
@@ -933,19 +965,23 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 18,
-    marginTop: 10,
+    marginTop: 2,
   },
   quickTile: {
-    width: 92,
-    height: 82,
+    width: COMPACT_CLUB ? 84 : 92,
+    height: COMPACT_CLUB ? 72 : 82,
     borderRadius: 18,
-    backgroundColor: 'rgba(212,175,55,0.1)',
+    backgroundColor: 'rgba(20,12,5,0.76)',
     borderWidth: 1.5,
-    borderColor: 'rgba(212,175,55,0.3)',
+    borderColor: 'rgba(212,175,55,0.38)',
     alignItems: 'center',
     justifyContent: 'center',
+    shadowColor: colors.gold,
+    shadowOpacity: 0.18,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
   },
-  quickLabel: { color: '#fff', fontWeight: '900', marginTop: 3 },
+  quickLabel: { color: '#fff', fontFamily: fontFamilies.heading, fontWeight: '400', marginTop: 3 },
   redBadge: {
     position: 'absolute',
     top: -8,
@@ -960,18 +996,22 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 5,
   },
-  redBadgeText: { color: '#fff', fontWeight: '900', fontSize: 12 },
+  redBadgeText: { color: '#fff', fontFamily: fontFamilies.heading, fontWeight: '400', fontSize: 12 },
   passBanner: {
     width: '94%',
-    minHeight: 82,
-    marginTop: 28,
-    borderRadius: 16,
-    borderWidth: 2,
-    borderColor: colors.gold,
+    minHeight: COMPACT_CLUB ? 72 : 82,
+    marginTop: COMPACT_CLUB ? 16 : 22,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,225,135,0.7)',
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 12,
     overflow: 'hidden',
+    shadowColor: colors.gold,
+    shadowOpacity: 0.22,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 5 },
   },
   passTrophy: {
     width: 66,
@@ -985,32 +1025,33 @@ const styles = StyleSheet.create({
     marginRight: 10,
   },
   passCopy: { flex: 1 },
-  passTitle: { color: '#FFE37A', fontWeight: '900', fontSize: 22, letterSpacing: 1 },
-  passSub: { color: 'rgba(255,255,255,0.7)', fontWeight: '700', fontSize: 12 },
+  passTitle: { color: '#FFE37A', fontFamily: fontFamilies.heading, fontWeight: '400', fontSize: 22, letterSpacing: 1 },
+  passSub: { color: 'rgba(255,255,255,0.7)', fontFamily: fontFamilies.body, fontWeight: '400', fontSize: 12 },
   passBtn: {
     backgroundColor: '#72D01D',
     borderRadius: 12,
     paddingHorizontal: 15,
     paddingVertical: 9,
   },
-  passBtnText: { color: '#fff', fontWeight: '900', fontSize: 15 },
+  passBtnText: { color: '#fff', fontFamily: fontFamilies.heading, fontWeight: '400', fontSize: 15 },
   largeGrid: {
     flexDirection: 'row',
-    gap: 14,
-    marginTop: 18,
+    gap: 10,
+    marginTop: COMPACT_CLUB ? 8 : 12,
   },
   smallGrid: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-    marginTop: 14,
+    gap: 8,
+    marginTop: COMPACT_CLUB ? 10 : 12,
+    width: '100%',
+    alignSelf: 'stretch',
   },
   modeCardLarge: {
     flex: 1,
-    height: 190,
-    borderRadius: 20,
-    borderWidth: 2.5,
-    borderColor: 'rgba(255,231,121,0.72)',
+    height: COMPACT_CLUB ? 150 : 172,
+    borderRadius: 14,
+    borderWidth: 0,
+    backgroundColor: 'transparent',
     overflow: 'hidden',
     justifyContent: 'flex-end',
     alignItems: 'center',
@@ -1022,15 +1063,21 @@ const styles = StyleSheet.create({
     elevation: 12,
   },
   modeCardSmall: {
-    width: (W - 60) / 3,
-    height: 138,
-    borderRadius: 16,
-    borderWidth: 1.5,
-    borderColor: 'rgba(255,230,120,0.34)',
+    flex: 1,
+    minWidth: 0,
+    height: COMPACT_CLUB ? 96 : 112,
+    borderRadius: 12,
+    borderWidth: 0,
+    backgroundColor: 'transparent',
     overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'flex-end',
     paddingBottom: 0,
+  },
+  modeCardImage: {
+    width: '100%',
+    height: '100%',
+    transform: [{ scale: 1.08 }],
   },
   modeGlow: {
     ...StyleSheet.absoluteFillObject,
@@ -1178,7 +1225,7 @@ const styles = StyleSheet.create({
   },
   modeLabelPlateSmall: {
     width: '100%',
-    minHeight: 46,
+    minHeight: COMPACT_CLUB ? 38 : 42,
     alignItems: 'center',
     justifyContent: 'center',
     paddingBottom: 8,
@@ -1196,9 +1243,10 @@ const styles = StyleSheet.create({
   },
   modeLabelSmall: {
     color: '#fff',
-    fontSize: 13,
+    fontSize: COMPACT_CLUB ? 11 : 12,
     fontWeight: '900',
     textAlign: 'center',
+    lineHeight: COMPACT_CLUB ? 13 : 15,
     textShadowColor: 'rgba(0,0,0,0.75)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 2,
@@ -1504,7 +1552,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 0,
     right: 0,
-    bottom: 0,
+    bottom: 96,
     alignItems: 'center',
     backgroundColor: 'rgba(0,0,0,0.25)',
   },

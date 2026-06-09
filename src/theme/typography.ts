@@ -1,11 +1,16 @@
+export const fontFamilies = {
+  heading: 'CinzelDecorative-Regular',
+  body: 'Cinzel-Regular',
+} as const;
+
 export const typography = {
-  display: { fontSize: 48, fontWeight: '800' as const, letterSpacing: 4 },
-  h1: { fontSize: 32, fontWeight: '700' as const, letterSpacing: 1 },
-  h2: { fontSize: 24, fontWeight: '700' as const },
-  h3: { fontSize: 18, fontWeight: '600' as const },
-  body: { fontSize: 16, fontWeight: '400' as const },
-  caption: { fontSize: 13, fontWeight: '400' as const },
-  tagline: { fontSize: 14, fontWeight: '500' as const, letterSpacing: 6 },
+  display: { fontFamily: fontFamilies.heading, fontSize: 48, fontWeight: '400' as const, letterSpacing: 4 },
+  h1: { fontFamily: fontFamilies.heading, fontSize: 32, fontWeight: '400' as const, letterSpacing: 1 },
+  h2: { fontFamily: fontFamilies.heading, fontSize: 24, fontWeight: '400' as const },
+  h3: { fontFamily: fontFamilies.heading, fontSize: 18, fontWeight: '400' as const },
+  body: { fontFamily: fontFamilies.body, fontSize: 16, fontWeight: '400' as const },
+  caption: { fontFamily: fontFamilies.body, fontSize: 13, fontWeight: '400' as const },
+  tagline: { fontFamily: fontFamilies.heading, fontSize: 14, fontWeight: '400' as const, letterSpacing: 6 },
 };
 
 export const spacing = {

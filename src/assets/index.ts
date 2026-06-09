@@ -40,6 +40,13 @@ export const Images = {
   btnRollDice: require('../../assets/images/btn-roll-dice.png'),
   btnCollect: require('../../assets/images/btn-collect.png'),
 
+  // Lobby mode cards
+  lobbyCardTwoPlayer: require('../../assets/images/two_player_lobby_card_1781003195014.png'),
+  lobbyCardFourPlayer: require('../../assets/images/four_player_lobby_card_1781003212625.png'),
+  lobbyCardPrivateTable: require('../../assets/images/private_table_lobby_card_1781003231457.png'),
+  lobbyCardTeamUpOnline: require('../../assets/images/team-up-online.png'),
+  lobbyCardTeamUpFriends: require('../../assets/images/team-up-friends.png'),
+
   // Game outcome
   trophyGold: require('../../assets/images/trophy-gold.png'),
   bannerVictory: require('../../assets/images/banner-victory.png'),
