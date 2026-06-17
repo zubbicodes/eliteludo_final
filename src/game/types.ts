@@ -40,6 +40,8 @@ export type GameStatus =
   | 'finished';
 
 export type GameState = {
+  /** Monotonic server-side match version. Local solo games start at 0. */
+  version: number;
   players: Player[];
   currentPlayerIdx: number;
   /** Unplayed dice values for the current turn, in roll order. */
@@ -72,4 +74,5 @@ export type MatchPlayer = {
   color: Color;
   username: string;
   avatar_id: number;
+  is_bot?: boolean;
 };

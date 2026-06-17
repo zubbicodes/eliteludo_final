@@ -44,5 +44,16 @@ create policy "matches_update_current_player" on public.matches
   with check (auth.uid() = current_turn_user_id);
 
 -- Enable Realtime so both tables stream changes to connected clients
-alter publication supabase_realtime add table public.match_queue;
-alter publication supabase_realtime add table public.matches;
+do $$
+begin
+  alter publication supabase_realtime add table public.match_queue;
+exception when others then
+  null; -- Table already in publication, skip
+end $$;
+
+do $$
+begin
+  alter publication supabase_realtime add table public.matches;
+exception when others then
+  null; -- Table already in publication, skip
+end $$;

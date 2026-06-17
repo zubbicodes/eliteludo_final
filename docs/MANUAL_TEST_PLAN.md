@@ -34,6 +34,7 @@ Use this checklist for flows that unit tests cannot fully cover because they dep
 - Two users entering the same mode can be matched into the same match.
 - If no player appears within the fallback window, the flow creates or enters a bot-backed match.
 - 4-player mode creates the expected player slots and can fill missing seats with bots.
+- In 4-player mode, queue two signed-in devices, wait about 18 seconds, and verify both users enter the same 4-seat realtime table with the remaining seats filled.
 - Private room creation returns a room code.
 - Joining a valid private room navigates both users into the same match.
 - Invalid room code shows a clear failure state and does not deduct coins permanently.
@@ -42,13 +43,20 @@ Use this checklist for flows that unit tests cannot fully cover because they dep
 
 - Server dice roll is used for multiplayer turns.
 - Local player cannot act during opponent turn.
-- Board state updates on the other device after a roll and move settle.
+- A 2-player online match does not allow rolling until both players are subscribed/present in `match:<matchId>:game`.
+- Board state updates on the other device through the private `match:<matchId>:game` Broadcast channel after a roll and move settle.
+- In a mixed 4-player table, only one device drives the AI seats and the other device receives those AI roll/move snapshots through Broadcast.
+- Roll and move Broadcast events arrive in order and stale or duplicate events do not rewind the board.
+- Reconnecting, backgrounding/foregrounding, or rejoining an active match loads a fresh `matches.board_state` snapshot and resumes Broadcast sync.
+- Gameplay remains smooth if Broadcast temporarily drops; the client should recover with a single snapshot fetch rather than constant polling.
+- Explicitly quitting an online match calls forfeit and awards the other player the win.
+- Closing/backgrounding/network-dropping one device after both players were present starts an opponent-left grace period; if the player does not return, `claim-opponent-left` finishes the match for the remaining player.
 - Captures send opponent tokens home on unsafe cells.
 - Safe cells prevent captures.
 - Three consecutive sixes forfeits the turn.
 - Captures and finishing a token grant the expected bonus roll.
 - Winner navigates to result screen on all active clients.
-- Reconnecting or reopening an active match loads the latest board state.
+- The active game screen does not poll `matches` every few seconds during healthy Broadcast sync.
 
 ## Wallet And Rewards
 
@@ -86,3 +94,4 @@ Use this checklist for flows that unit tests cannot fully cover because they dep
 - Verify app icon, adaptive icon, splash screen, and package name.
 - Run a signed Android build on a physical mid-range device.
 - Run at least one full auth -> matchmaking -> game -> reward -> shop session from a clean install.
+- Load test Realtime Broadcast with the expected launch concurrency and track channel join success, p95 action latency, Edge Function duration, DB CPU, and Realtime message rate.

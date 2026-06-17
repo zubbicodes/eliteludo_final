@@ -23,6 +23,7 @@ type MoveOption = {
   captures: string[];
 };
 type GameState = {
+  version?: number;
   players: Player[];
   currentPlayerIdx: number;
   dicePool: number[];
@@ -32,7 +33,8 @@ type GameState = {
   lastRollByColor: Partial<Record<Color, number>>;
   lastMove: MoveOption | null;
 };
-type MatchPlayer = { user_id: string; color: Color };
+type MatchPlayer = { user_id: string; color: Color; is_bot?: boolean };
+const MATCH_BROADCAST_EVENT = "match_event";
 
 const COLOR_START_INDEX: Record<Color, number> = {
   red: 0,
@@ -56,6 +58,32 @@ function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: { ...cors, "Content-Type": "application/json" },
+  });
+}
+
+function nextVersion(state: GameState): number {
+  return (typeof state.version === "number" ? state.version : 0) + 1;
+}
+
+function turnOwnerUserId(
+  matchPlayers: MatchPlayer[],
+  color: Color,
+  fallbackUserId: string,
+): string {
+  const player = matchPlayers.find((p) => p.color === color);
+  if (player && !player.is_bot && !player.user_id.startsWith("bot-")) return player.user_id;
+  return matchPlayers.find((p) => !p.is_bot && !p.user_id.startsWith("bot-"))?.user_id ?? fallbackUserId;
+}
+
+async function broadcastMatchEvent(
+  svc: ReturnType<typeof createClient>,
+  matchId: string,
+  payload: Record<string, unknown>,
+) {
+  await svc.rpc("broadcast_match_event", {
+    p_match_id: matchId,
+    p_event: MATCH_BROADCAST_EVENT,
+    p_payload: payload,
   });
 }
 
@@ -137,7 +165,7 @@ function advanceToNextPlayer(state: GameState): GameState {
     ...state,
     currentPlayerIdx: nextIdx,
     dicePool: [],
-    consecutiveSixes: move.dieValue === 6 ? state.consecutiveSixes : 0,
+    consecutiveSixes: 0,
     status: "awaiting_roll",
     lastMove: null,
   };
@@ -166,7 +194,7 @@ function applyMove(state: GameState, move: MoveOption): GameState {
     dicePool: removeOne(state.dicePool, move.dieValue),
     winnerColor: won ? movedPlayer.color : state.winnerColor,
     status: "animating",
-    consecutiveSixes: 0,
+    consecutiveSixes: move.dieValue === 6 ? state.consecutiveSixes : 0,
     lastMove: move,
   };
 }
@@ -282,12 +310,11 @@ serve(async (req) => {
   if (!move) return json({ success: false, reason: "Invalid move", boardState }, 409);
 
   const movedBoardState = applyMove(boardState, move);
-  const newBoardState = finishMove(movedBoardState);
+  const newBoardState = { ...finishMove(movedBoardState), version: nextVersion(boardState) };
   const nextColor = newBoardState.players[newBoardState.currentPlayerIdx].color;
-  const nextPlayer = matchPlayers.find((p) => p.color === nextColor);
   const patch: Record<string, unknown> = {
     board_state: newBoardState,
-    current_turn_user_id: nextPlayer?.user_id ?? match.current_turn_user_id,
+    current_turn_user_id: turnOwnerUserId(matchPlayers, nextColor, match.current_turn_user_id),
   };
 
   if (newBoardState.status === "finished" && newBoardState.winnerColor) {
@@ -297,14 +324,18 @@ serve(async (req) => {
     patch.finished_at = new Date().toISOString();
   }
 
-  const { error: updateErr } = await svc
+  const { data: updatedRows, error: updateErr } = await svc
     .from("matches")
     .update(patch)
     .eq("id", matchId)
     .eq("current_turn_user_id", user.id)
-    .eq("status", "active");
+    .eq("status", "active")
+    .select("id");
 
   if (updateErr) return json({ success: false, reason: "Update failed" }, 500);
+  if (!updatedRows || updatedRows.length !== 1) {
+    return json({ success: false, reason: "Turn already advanced", boardState }, 409);
+  }
 
   await svc.from("match_moves").insert({
     match_id: matchId,
@@ -313,10 +344,25 @@ serve(async (req) => {
     payload: { tokenId, dieValue, move, nextStatus: newBoardState.status },
   });
 
+  const event = {
+    eventId: crypto.randomUUID(),
+    matchId,
+    type: newBoardState.status === "finished" ? "match_finished" : "move_result",
+    version: newBoardState.version,
+    move,
+    boardState: newBoardState,
+    currentTurnUserId: patch.current_turn_user_id,
+    winnerColor: newBoardState.winnerColor,
+    winnerUserId: patch.winner_user_id ?? null,
+  };
+
+  await broadcastMatchEvent(svc, matchId, event);
+
   return json({
     success: true,
     move,
     boardState: newBoardState,
     currentTurnUserId: patch.current_turn_user_id,
+    event,
   });
 });

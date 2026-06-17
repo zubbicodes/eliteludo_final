@@ -29,6 +29,7 @@ import type {
   TokenId,
   TokenLocation,
 } from './types';
+import { botAvatarId, botDisplayName } from './bots';
 import { COLORS } from './types';
 
 // ---------- factories ----------
@@ -62,10 +63,11 @@ export function makeInitialGameState(
   const players: Player[] = seats.map((color, i) =>
     color === humanColor
       ? makeInitialPlayer(color, human?.name ?? 'You', false, human?.avatarId ?? i)
-      : makeInitialPlayer(color, `Bot ${color.charAt(0).toUpperCase() + color.slice(1)}`, true, i),
+      : makeInitialPlayer(color, botDisplayName(`${color}-${i}`), true, botAvatarId(`${color}-${i}`)),
   );
   const startIdx = players.findIndex((p) => p.color === humanColor);
   return {
+    version: 0,
     players,
     currentPlayerIdx: startIdx >= 0 ? startIdx : 0,
     dicePool: [],

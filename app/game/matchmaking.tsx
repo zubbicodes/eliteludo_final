@@ -24,7 +24,8 @@ import { deductEntryFee } from '@/src/supabase/transactions';
 import { colors } from '@/src/theme/colors';
 import { fontFamilies } from '@/src/theme/typography';
 
-const BOT_FALLBACK_MS = 10_000;
+const TWO_PLAYER_FILL_MS = 10_000;
+const FOUR_PLAYER_FILL_MS = 18_000;
 
 function RadarRing({ delay }: { delay: number }) {
   const scale = useSharedValue(0.3);
@@ -73,6 +74,7 @@ export default function MatchmakingScreen() {
   const gameMode = mode === '4p' ? '4p' : '2p';
   const queueMode = gameMode === '4p' ? '4p' : '1v1';
   const targetPlayerCount = gameMode === '4p' ? 4 : 2;
+  const fallbackMs = gameMode === '4p' ? FOUR_PLAYER_FILL_MS : TWO_PLAYER_FILL_MS;
   const fee = Number(entryFee ?? 0);
 
   const pulseScale = useSharedValue(1);
@@ -154,7 +156,7 @@ export default function MatchmakingScreen() {
       }
 
       fallbackRef.current = setTimeout(async () => {
-        setLabel('Matching with computer...');
+        setLabel('Finalizing table...');
         const fallback = await findMatch({
           entryFee: fee,
           mode: queueMode,
@@ -162,7 +164,7 @@ export default function MatchmakingScreen() {
           botFallback: true,
         });
         navigate(fallback?.matchId ?? `solo-${Date.now()}`);
-      }, BOT_FALLBACK_MS);
+      }, fallbackMs);
     };
 
     startQueue().catch(() => {
@@ -175,7 +177,7 @@ export default function MatchmakingScreen() {
       clearTimeout(fallbackRef.current!);
       unsubscribeQueueRef.current?.();
     };
-  }, [citySlug, fee, goHome, navigate, pulseScale, queueMode, refreshWallet, router]);
+  }, [citySlug, fallbackMs, fee, goHome, navigate, pulseScale, queueMode, refreshWallet, router]);
 
   const pulseStyle = useAnimatedStyle(() => ({
     transform: [{ scale: pulseScale.value }],
@@ -287,7 +289,7 @@ export default function MatchmakingScreen() {
         </View>
 
         <Text style={styles.timer}>{mm}:{ss}</Text>
-        <Text style={styles.fallbackHint}>Computer match starts after 10 seconds</Text>
+        <Text style={styles.fallbackHint}>Table starts when seats are ready</Text>
 
         {/* Token decoration */}
         <View style={styles.tokensRow}>

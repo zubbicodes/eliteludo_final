@@ -15,6 +15,7 @@ type MatchPlayer = {
   color: Color;
   is_bot?: boolean;
 };
+
 const MATCH_BROADCAST_EVENT = "match_event";
 
 const cors = {
@@ -53,18 +54,18 @@ serve(async (req) => {
   if (!authHeader) return json({ success: false, reason: "Unauthorized" }, 401);
 
   let matchId: string;
+  let missingUserId: string | undefined;
   try {
-    ({ matchId } = await req.json());
+    const body = await req.json();
+    matchId = body.matchId;
+    missingUserId = typeof body.missingUserId === "string" ? body.missingUserId : undefined;
     if (!matchId) throw new Error();
   } catch {
     return json({ success: false, reason: "matchId required" }, 400);
   }
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-  const svc = createClient(
-    supabaseUrl,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-  );
+  const svc = createClient(supabaseUrl, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
   const anon = createClient(
     supabaseUrl,
     Deno.env.get("SUPABASE_ANON_KEY")!,
@@ -82,31 +83,34 @@ serve(async (req) => {
 
   if (matchErr || !match) return json({ success: false, reason: "Match not found" }, 404);
 
+  const boardState = match.board_state as GameState;
   if (match.status === "finished") {
-    const board = match.board_state as GameState;
     return json({
       success: true,
       winnerUserId: match.winner_user_id,
-      winnerColor: board.winnerColor,
+      winnerColor: boardState.winnerColor,
+      boardState,
       reason: "Already finished",
     });
   }
-
-  if (match.status !== "active") {
-    return json({ success: false, reason: "Match not active" }, 409);
-  }
+  if (match.status !== "active") return json({ success: false, reason: "Match not active" }, 409);
 
   const players = match.players as MatchPlayer[];
-  const leaving = players.find((p) => p.user_id === user.id);
-  if (!leaving) return json({ success: false, reason: "Not in match" }, 403);
-
-  const winner = players.find((p) => p.user_id !== user.id && !p.is_bot) ??
-    players.find((p) => p.user_id !== user.id);
-  if (!winner) {
-    return json({ success: false, reason: "No opponent to award" }, 409);
+  const humanPlayers = players.filter((p) => !p.is_bot && !p.user_id.startsWith("bot-"));
+  if (humanPlayers.length !== 2) {
+    return json({ success: false, reason: "Presence forfeit is enabled only for 2-player online matches" }, 409);
   }
 
-  const boardState = match.board_state as GameState;
+  const winner = humanPlayers.find((p) => p.user_id === user.id);
+  const missing = missingUserId
+    ? humanPlayers.find((p) => p.user_id === missingUserId)
+    : humanPlayers.find((p) => p.user_id !== user.id);
+
+  if (!winner) return json({ success: false, reason: "Not in match" }, 403);
+  if (!missing || missing.user_id === winner.user_id) {
+    return json({ success: false, reason: "Invalid missing opponent" }, 400);
+  }
+
   const winnerIdx = boardState.players.findIndex((p) => p.color === winner.color);
   const nextBoardState: GameState = {
     ...boardState,
@@ -140,8 +144,9 @@ serve(async (req) => {
     user_id: user.id,
     move_type: "forfeit",
     payload: {
-      leavingUserId: user.id,
-      leavingColor: leaving.color,
+      reason: "presence_timeout",
+      missingUserId: missing.user_id,
+      missingColor: missing.color,
       winnerUserId: winner.user_id,
       winnerColor: winner.color,
     },
@@ -155,7 +160,7 @@ serve(async (req) => {
     boardState: nextBoardState,
     winnerUserId: winner.user_id,
     winnerColor: winner.color,
-    reason: "forfeit",
+    reason: "presence_timeout",
   };
 
   await broadcastMatchEvent(svc, matchId, event);
@@ -164,6 +169,7 @@ serve(async (req) => {
     success: true,
     winnerUserId: winner.user_id,
     winnerColor: winner.color,
+    boardState: nextBoardState,
     event,
   });
 });

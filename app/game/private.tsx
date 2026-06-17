@@ -103,7 +103,7 @@ export default function PrivateRoomScreen() {
           </Pressable>
         </View>
 
-        <Text style={styles.note}>Entry fee: 250 coins. Bot fill is available from matchmaking if no players are online.</Text>
+        <Text style={styles.note}>Entry fee: 250 coins. Open seats can be filled from matchmaking when the table is ready.</Text>
       </View>
     </SafeAreaView>
   );

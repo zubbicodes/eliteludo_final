@@ -24,6 +24,7 @@ type GameStatus =
   | "animating"
   | "finished";
 type GameState = {
+  version?: number;
   players: Player[];
   currentPlayerIdx: number;
   dicePool: number[];
@@ -33,7 +34,8 @@ type GameState = {
   lastRollByColor: Partial<Record<Color, number>>;
   lastMove: unknown;
 };
-type MatchPlayer = { user_id: string; color: Color };
+type MatchPlayer = { user_id: string; color: Color; is_bot?: boolean };
+const MATCH_BROADCAST_EVENT = "match_event";
 
 const COLOR_START_INDEX: Record<Color, number> = {
   red: 0,
@@ -91,6 +93,32 @@ function addRoll(state: GameState, value: number): GameState {
     status: "awaiting_move",
     lastRollByColor,
   };
+}
+
+function nextVersion(state: GameState): number {
+  return (typeof state.version === "number" ? state.version : 0) + 1;
+}
+
+function turnOwnerUserId(
+  matchPlayers: MatchPlayer[],
+  color: Color,
+  fallbackUserId: string,
+): string {
+  const player = matchPlayers.find((p) => p.color === color);
+  if (player && !player.is_bot && !player.user_id.startsWith("bot-")) return player.user_id;
+  return matchPlayers.find((p) => !p.is_bot && !p.user_id.startsWith("bot-"))?.user_id ?? fallbackUserId;
+}
+
+async function broadcastMatchEvent(
+  svc: ReturnType<typeof createClient>,
+  matchId: string,
+  payload: Record<string, unknown>,
+) {
+  await svc.rpc("broadcast_match_event", {
+    p_match_id: matchId,
+    p_event: MATCH_BROADCAST_EVENT,
+    p_payload: payload,
+  });
 }
 
 function tryMove(token: Token, dice: number): TokenLocation | null {
@@ -232,11 +260,11 @@ serve(async (req) => {
       newBoardState = advanceToNextPlayer({ ...newBoardState, dicePool: [] });
     }
   }
+  newBoardState = { ...newBoardState, version: nextVersion(boardState) };
 
   // Determine whose turn it is now (column must stay in sync with board_state)
   const nextColor = newBoardState.players[newBoardState.currentPlayerIdx].color;
-  const nextPlayer = matchPlayers.find((p) => p.color === nextColor);
-  const nextTurnUserId = nextPlayer?.user_id ?? match.current_turn_user_id;
+  const nextTurnUserId = turnOwnerUserId(matchPlayers, nextColor, match.current_turn_user_id);
 
   const { data: updatedRows, error: updateErr } = await svc
     .from("matches")
@@ -260,5 +288,17 @@ serve(async (req) => {
     payload: { value, newStatus: newBoardState.status },
   });
 
-  return json({ success: true, value, boardState: newBoardState });
+  const event = {
+    eventId: crypto.randomUUID(),
+    matchId,
+    type: "roll_result",
+    version: newBoardState.version,
+    value,
+    boardState: newBoardState,
+    currentTurnUserId: nextTurnUserId,
+  };
+
+  await broadcastMatchEvent(svc, matchId, event);
+
+  return json({ success: true, value, boardState: newBoardState, event });
 });

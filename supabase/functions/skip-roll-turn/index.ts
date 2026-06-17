@@ -3,6 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 type Color = "red" | "green" | "yellow" | "blue";
 type GameState = {
+  version?: number;
   players: {
     color: Color;
     tokens: { location: { kind: string } }[];
@@ -15,7 +16,8 @@ type GameState = {
   lastMove: unknown;
   [key: string]: unknown;
 };
-type MatchPlayer = { user_id: string; color: Color };
+type MatchPlayer = { user_id: string; color: Color; is_bot?: boolean };
+const MATCH_BROADCAST_EVENT = "match_event";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -45,6 +47,32 @@ function advanceToNextPlayer(state: GameState): GameState {
     status: "awaiting_roll",
     lastMove: null,
   };
+}
+
+function nextVersion(state: GameState): number {
+  return (typeof state.version === "number" ? state.version : 0) + 1;
+}
+
+function turnOwnerUserId(
+  matchPlayers: MatchPlayer[],
+  color: Color,
+  fallbackUserId: string,
+): string {
+  const player = matchPlayers.find((p) => p.color === color);
+  if (player && !player.is_bot && !player.user_id.startsWith("bot-")) return player.user_id;
+  return matchPlayers.find((p) => !p.is_bot && !p.user_id.startsWith("bot-"))?.user_id ?? fallbackUserId;
+}
+
+async function broadcastMatchEvent(
+  svc: ReturnType<typeof createClient>,
+  matchId: string,
+  payload: Record<string, unknown>,
+) {
+  await svc.rpc("broadcast_match_event", {
+    p_match_id: matchId,
+    p_event: MATCH_BROADCAST_EVENT,
+    p_payload: payload,
+  });
 }
 
 serve(async (req) => {
@@ -102,10 +130,9 @@ serve(async (req) => {
   if (boardState.winnerColor) return json({ success: false, reason: "Match finished" });
 
   const skippedColor = boardState.players[boardState.currentPlayerIdx].color;
-  const newBoardState = advanceToNextPlayer(boardState);
+  const newBoardState = { ...advanceToNextPlayer(boardState), version: nextVersion(boardState) };
   const nextColor = newBoardState.players[newBoardState.currentPlayerIdx].color;
-  const nextPlayer = matchPlayers.find((p) => p.color === nextColor);
-  const nextTurnUserId = nextPlayer?.user_id ?? match.current_turn_user_id;
+  const nextTurnUserId = turnOwnerUserId(matchPlayers, nextColor, match.current_turn_user_id);
 
   const { data: updatedRows, error: updateErr } = await svc
     .from("matches")
@@ -135,9 +162,22 @@ serve(async (req) => {
     },
   });
 
+  const event = {
+    eventId: crypto.randomUUID(),
+    matchId,
+    type: "turn_skipped",
+    version: newBoardState.version,
+    boardState: newBoardState,
+    currentTurnUserId: nextTurnUserId,
+    reason: "roll_timeout",
+  };
+
+  await broadcastMatchEvent(svc, matchId, event);
+
   return json({
     success: true,
     boardState: newBoardState,
     currentTurnUserId: nextTurnUserId,
+    event,
   });
 });

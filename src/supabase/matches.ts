@@ -1,5 +1,11 @@
 import { supabase } from './client';
 import type { Color, MatchBoardState, MatchPlayer } from '../game/types';
+import {
+  subscribeMatchBroadcast,
+  type MatchPresence,
+  type MatchRealtimeEvent,
+  type MatchRealtimeStatus,
+} from './matchRealtime';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -28,6 +34,7 @@ export type RollDiceResult = {
   success?: boolean;
   value?: number;
   boardState?: MatchBoardState;
+  event?: MatchRealtimeEvent;
   reason?: string;
 };
 
@@ -35,6 +42,16 @@ export type ForfeitMatchResult = {
   success: boolean;
   winnerUserId?: string;
   winnerColor?: Color;
+  event?: MatchRealtimeEvent;
+  reason?: string;
+};
+
+export type PresenceForfeitResult = {
+  success: boolean;
+  winnerUserId?: string;
+  winnerColor?: Color;
+  boardState?: MatchBoardState;
+  event?: MatchRealtimeEvent;
   reason?: string;
 };
 
@@ -42,6 +59,7 @@ export type SkipRollTurnResult = {
   success: boolean;
   boardState?: MatchBoardState;
   currentTurnUserId?: string;
+  event?: MatchRealtimeEvent;
   reason?: string;
 };
 
@@ -56,6 +74,15 @@ export type MoveTokenResult = {
   };
   boardState?: MatchBoardState;
   currentTurnUserId?: string;
+  event?: MatchRealtimeEvent;
+  reason?: string;
+};
+
+export type SyncBoardStateResult = {
+  success: boolean;
+  boardState?: MatchBoardState;
+  currentTurnUserId?: string;
+  event?: MatchRealtimeEvent;
   reason?: string;
 };
 
@@ -165,6 +192,21 @@ export async function forfeitMatch(
   return data;
 }
 
+export async function claimOpponentLeft(
+  matchId: string,
+  missingUserId?: string,
+): Promise<PresenceForfeitResult | null> {
+  const { data, error } = await supabase.functions.invoke<PresenceForfeitResult>(
+    'claim-opponent-left',
+    { body: { matchId, missingUserId } },
+  );
+  if (error) {
+    console.warn('[matches] claim-opponent-left error:', error.message);
+    return null;
+  }
+  return data;
+}
+
 export async function skipRollTurnServer(
   matchId: string,
   expectedPlayerIdx?: number,
@@ -196,34 +238,40 @@ export async function moveTokenServer(
   return data;
 }
 
+export async function syncBoardStateServer(
+  matchId: string,
+  boardState: MatchBoardState,
+): Promise<SyncBoardStateResult | null> {
+  const { data, error } = await supabase.functions.invoke<SyncBoardStateResult>(
+    'sync-board-state',
+    { body: { matchId, boardState } },
+  );
+  if (error) {
+    console.warn('[matches] sync-board-state error:', error.message);
+    return null;
+  }
+  return data;
+}
+
 // ── Realtime ──────────────────────────────────────────────────────────────────
 
 export function subscribeMatch(
   matchId: string,
-  onUpdate: (boardState: MatchBoardState) => void,
+  onEvent: (event: MatchRealtimeEvent) => void,
+  onStatus?: (status: MatchRealtimeStatus) => void,
+  presence?: {
+    self: Omit<MatchPresence, 'joinedAt'>;
+    onPresence: (presence: MatchPresence[]) => void;
+  },
 ): () => void {
-  const channel = supabase
-    .channel(`match-${matchId}`)
-    .on(
-      'postgres_changes',
-      {
-        event: 'UPDATE',
-        schema: 'public',
-        table: 'matches',
-        filter: `id=eq.${matchId}`,
-      },
-      (payload) => {
-        const newState = (payload.new as { board_state?: MatchBoardState })?.board_state;
-        if (newState) onUpdate(newState);
-      },
-    )
-    .subscribe((status, error) => {
-      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-        console.warn('[matches] realtime match channel status:', status, error?.message);
-      }
-    });
-
-  return () => { supabase.removeChannel(channel); };
+  const subscription = subscribeMatchBroadcast({
+    matchId,
+    onEvent,
+    onStatus,
+    presence: presence?.self,
+    onPresence: presence?.onPresence,
+  });
+  return subscription.unsubscribe;
 }
 
 export function subscribeQueue(

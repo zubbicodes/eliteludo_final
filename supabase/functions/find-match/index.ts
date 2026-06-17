@@ -14,6 +14,24 @@ type Player = {
 
 const COLORS: Color[] = ["red", "green", "yellow", "blue"];
 const OPPOSITE_PAIRS: [Color, Color][] = [["red", "yellow"], ["green", "blue"]];
+const FEMALE_BOT_NAMES = [
+  "Aisha",
+  "Maya",
+  "Zara",
+  "Noor",
+  "Sara",
+  "Lina",
+  "Hana",
+  "Amira",
+  "Sofia",
+  "Layla",
+  "Mina",
+  "Elena",
+  "Nadia",
+  "Riya",
+  "Anaya",
+  "Leena",
+];
 const cors = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -35,6 +53,7 @@ function makePlayer(color: Color, name: string, avatarId: number, isAI = false):
 
 function makeBoardState(players: Player[]) {
   return {
+    version: 0,
     players,
     currentPlayerIdx: 0,
     dicePool: [],
@@ -66,6 +85,22 @@ function shuffle<T>(items: T[]): T[] {
     [items[i], items[j]] = [items[j], items[i]];
   }
   return items;
+}
+
+function hashSeed(seed: string): number {
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) {
+    hash = ((hash << 5) - hash + seed.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash);
+}
+
+function botName(seed: string): string {
+  return FEMALE_BOT_NAMES[hashSeed(seed) % FEMALE_BOT_NAMES.length];
+}
+
+function botAvatarId(seed: string): number {
+  return hashSeed(seed) % 8;
 }
 
 function roomCode() {
@@ -188,20 +223,50 @@ serve(async (req) => {
   }
 
   if (botFallback) {
-    await svc.from("match_queue").delete().eq("user_id", user.id).is("match_id", null);
     const target = mode === "4p" ? 4 : 2;
+    const queueMode = mode === "4p" ? "4p" : "1v1";
+    const { data: queued } = await svc
+      .from("match_queue")
+      .select("user_id, joined_at")
+      .eq("mode", queueMode)
+      .eq("entry_fee", entryFee)
+      .is("match_id", null)
+      .order("joined_at", { ascending: true })
+      .limit(target);
+    const realUserIds = Array.from(new Set([
+      user.id,
+      ...((queued ?? []).map((q: { user_id: string }) => q.user_id)),
+    ])).slice(0, target);
+    const { data: profiles } = await svc
+      .from("profiles")
+      .select("id, username, avatar_id")
+      .in("id", realUserIds);
+    const byId = new Map((profiles ?? []).map((p: any) => [p.id, p]));
     const seatColors = assignRuntimeColors(target);
-    const players = [
-      makePlayer(seatColors[0], myProfile?.username ?? "You", myProfile?.avatar_id ?? 0),
-      ...seatColors.slice(1).map((color, i) => makePlayer(color, `Bot ${i + 1}`, i + 1, true)),
-    ];
-    const matchPlayers = players.map((p, i) => ({
-      user_id: i === 0 ? user.id : `bot-${crypto.randomUUID()}`,
-      color: p.color,
-      username: p.name,
-      avatar_id: p.avatarId,
-      is_bot: p.isAI,
-    }));
+    const matchPlayers = seatColors.map((color, i) => {
+      const realUserId = realUserIds[i];
+      if (realUserId) {
+        const profile = byId.get(realUserId);
+        return {
+          user_id: realUserId,
+          color,
+          username: profile?.username ?? (realUserId === user.id ? myProfile?.username ?? "You" : `Player ${i + 1}`),
+          avatar_id: profile?.avatar_id ?? (realUserId === user.id ? myProfile?.avatar_id ?? i : i),
+          is_bot: false,
+        };
+      }
+      const seed = `${entryFee}-${queueMode}-${color}-${i}`;
+      return {
+        user_id: `bot-${crypto.randomUUID()}`,
+        color,
+        username: botName(seed),
+        avatar_id: botAvatarId(seed),
+        is_bot: true,
+      };
+    });
+    const players = matchPlayers.map((p) =>
+      makePlayer(p.color, p.username, p.avatar_id, p.is_bot),
+    );
     const { data: match } = await svc.from("matches").insert({
       mode: mode === "4p" ? "4p" : "1v1",
       status: "active",
@@ -212,7 +277,14 @@ serve(async (req) => {
       prize_pool: entryFee * target,
       city_slug: citySlug,
     }).select("id").single();
-    return new Response(JSON.stringify({ matchId: match?.id ?? `solo-${crypto.randomUUID()}`, matched: false, isBot: true }), {
+    if (match?.id) {
+      await svc
+        .from("match_queue")
+        .update({ match_id: match.id })
+        .in("user_id", realUserIds)
+        .is("match_id", null);
+    }
+    return new Response(JSON.stringify({ matchId: match?.id ?? `solo-${crypto.randomUUID()}`, matched: realUserIds.length > 1, isBot: true }), {
       headers: { ...cors, "Content-Type": "application/json" },
     });
   }

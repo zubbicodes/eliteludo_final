@@ -5,10 +5,20 @@ import { SAFE_TRACK_INDICES, progressFor } from './board';
 import { getValidMoves } from './rules';
 import type { Color, GameState, MoveOption } from './types';
 
-export function chooseMove(state: GameState, color: Color): MoveOption | null {
+export function chooseMove(
+  state: GameState,
+  color: Color,
+  rng: () => number = Math.random,
+): MoveOption | null {
   const moves = getValidMoves(state, color);
   if (moves.length === 0) return null;
-  return moves.slice().sort((a, b) => score(b, color) - score(a, color))[0];
+  const ranked = moves.slice().sort((a, b) => score(b, color) - score(a, color));
+  const best = score(ranked[0], color);
+  const close = ranked.filter((move) => best - score(move, color) <= 60).slice(0, 3);
+  if (close.length > 1 && rng() < 0.18) {
+    return close[1 + Math.floor(rng() * (close.length - 1))];
+  }
+  return ranked[0];
 }
 
 function score(move: MoveOption, color: Color): number {

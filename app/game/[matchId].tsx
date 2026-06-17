@@ -26,6 +26,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { TokenDicePicker } from '@/src/components/TokenDicePicker';
 import { getAvatar } from '@/src/constants/profile';
+import { botThinkDelay } from '@/src/game/bots';
 import { BOARD_SIZE, cellForToken } from '@/src/game/board';
 import { cellForPerspective, visualCornerForColor } from '@/src/game/perspective';
 import { pathCellsForMove } from '@/src/game/rules';
@@ -35,13 +36,22 @@ import { Images } from '@/src/assets';
 import { supabase } from '@/src/supabase/client';
 import { getSupabaseErrorMessage } from '@/src/supabase/errors';
 import {
+  claimOpponentLeft,
   getMatch,
   forfeitMatch,
   moveTokenServer,
   rollDiceServer,
   skipRollTurnServer,
   subscribeMatch,
+  syncBoardStateServer,
 } from '@/src/supabase/matches';
+import {
+  boardVersion,
+  shouldApplyMatchEvent,
+  withBoardVersion,
+  type MatchPresence,
+  type MatchRealtimeEvent,
+} from '@/src/supabase/matchRealtime';
 import { BoardCanvas } from '@/src/skia/Board';
 import { Dice } from '@/src/skia/Dice';
 import { Particles, type Burst } from '@/src/skia/Particles';
@@ -75,11 +85,11 @@ const CITY_BACKGROUNDS: Record<string, ImageSourcePropType> = {
   brazil: Images.cityBrazil,
 };
 
-const THINK_MS = 700;
 const ROLL_ANIM_MS = 360;
 const MP_ROLL_SETTLE_MS = 120;
 const ROLL_TIMEOUT_MS = 5000;
-const ROLL_TIMER_TICK_MS = 100;
+const ROLL_TIMER_TICK_MS = 250;
+const OPPONENT_ABSENCE_GRACE_MS = 12_000;
 const HOP_MS = 130;
 const MIN_MOVE_MS = 220;
 const CAPTURE_TAIL_MS = 260;
@@ -98,7 +108,9 @@ export default function GameScreen() {
   // Solo = client-only path; multiplayer = server dice + Realtime sync
   const isSoloMatchId = !matchId || matchId.startsWith('solo-');
   const [botBackedMatch, setBotBackedMatch] = useState(false);
-  const isLocalBotGame = isSoloMatchId || botBackedMatch;
+  const isLocalBotGame = isSoloMatchId;
+  const [localUserId, setLocalUserId] = useState<string | null>(null);
+  const [botDriverUserId, setBotDriverUserId] = useState<string | null>(null);
 
   const state = useGameStore((s) => s.state);
   const validMoves = useGameStore((s) => s.validMoves);
@@ -115,6 +127,9 @@ export default function GameScreen() {
   const [rollTimerRemaining, setRollTimerRemaining] = useState(ROLL_TIMEOUT_MS);
   const [statsPlayer, setStatsPlayer] = useState<Player | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [requiresRoomPresence, setRequiresRoomPresence] = useState(false);
+  const [roomReady, setRoomReady] = useState(true);
+  const [roomPresence, setRoomPresence] = useState<MatchPresence[]>([]);
 
   const profile = useProfileStore((s) => s.profile);
   const hydrateProfile = useProfileStore((s) => s.hydrate);
@@ -124,14 +139,20 @@ export default function GameScreen() {
   // Stable refs to avoid stale closures in Realtime callbacks
   const stateRef = useRef(state);
   const myColorRef = useRef(myColor);
+  const localUserIdRef = useRef<string | null>(null);
+  const botDriverUserIdRef = useRef<string | null>(null);
   const matchPlayersRef = useRef<MatchPlayerEntry[]>([]);
+  const seenEventIdsRef = useRef<Set<string>>(new Set());
   const leavingRef = useRef(false);
   const timeoutInFlightRef = useRef(false);
-  const localMovePendingRef = useRef(false);
+  const opponentWasPresentRef = useRef(false);
+  const opponentForfeitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const opponentForfeitInFlightRef = useRef(false);
   const localSeatColorsRef = useRef<Color[] | null>(null);
 
   useEffect(() => { stateRef.current = state; }, [state]);
   useEffect(() => { myColorRef.current = myColor; }, [myColor]);
+  useEffect(() => { botDriverUserIdRef.current = botDriverUserId; }, [botDriverUserId]);
 
   useEffect(() => {
     hydrateProfile();
@@ -139,6 +160,16 @@ export default function GameScreen() {
 
   useEffect(() => {
     localSeatColorsRef.current = null;
+    seenEventIdsRef.current.clear();
+    opponentWasPresentRef.current = false;
+    opponentForfeitInFlightRef.current = false;
+    if (opponentForfeitTimerRef.current) clearTimeout(opponentForfeitTimerRef.current);
+    opponentForfeitTimerRef.current = null;
+    setRequiresRoomPresence(false);
+    setRoomReady(true);
+    setRoomPresence([]);
+    setBotDriverUserId(null);
+    setLocalUserId(null);
   }, [matchId, gameMode]);
 
   const boardSize = Math.min(
@@ -149,29 +180,88 @@ export default function GameScreen() {
   const cellPx = boardSize / BOARD_SIZE;
   const tokenSize = cellPx * 0.98;
 
-  const holdLocalMoveCommit = useCallback(() => {
-    localMovePendingRef.current = true;
+  const reloadMatchSnapshot = useCallback(async () => {
+    if (!matchId || isSoloMatchId) return;
+    const match = await getMatch(matchId);
+    if (!match) return;
+    const remote = normalizeMatchBoardState(match.board_state, matchPlayersRef.current, myColorRef.current);
+    if (boardVersion(remote) >= boardVersion(stateRef.current)) {
+      loadGame(remote);
+    }
+  }, [isSoloMatchId, loadGame, matchId]);
+
+  const applyRealtimeEvent = useCallback((event: MatchRealtimeEvent) => {
+    if (event.matchId !== matchId) return;
+    const currentVersion = boardVersion(stateRef.current);
+    if (!shouldApplyMatchEvent(event, currentVersion, seenEventIdsRef.current)) return;
+    seenEventIdsRef.current.add(event.eventId);
+
+    if (event.type === 'sync_required' || !event.boardState) {
+      void reloadMatchSnapshot();
+      return;
+    }
+
+    loadGame(normalizeMatchBoardState(event.boardState, matchPlayersRef.current, myColorRef.current));
+  }, [loadGame, matchId, reloadMatchSnapshot]);
+
+  const clearOpponentForfeitTimer = useCallback(() => {
+    if (opponentForfeitTimerRef.current) clearTimeout(opponentForfeitTimerRef.current);
+    opponentForfeitTimerRef.current = null;
   }, []);
 
-  const releaseLocalMoveCommit = useCallback(() => {
-    localMovePendingRef.current = false;
-  }, []);
+  const handleRoomPresence = useCallback((presence: MatchPresence[]) => {
+    setRoomPresence(presence);
 
-  const shouldHydrateRemoteBoard = useCallback(() => {
-    if (localMovePendingRef.current) return false;
-
-    const s = stateRef.current;
-    const mc = myColorRef.current;
-    if (!mc) return true;
-
-    const myIdx = s.players.findIndex((p) => p.color === mc);
-    return !(
-      s.currentPlayerIdx === myIdx &&
-      (s.status === 'rolling' ||
-        s.status === 'awaiting_move' ||
-        s.status === 'animating')
+    const localUserId = localUserIdRef.current;
+    const humanPlayers = matchPlayersRef.current.filter(
+      (p) => !p.is_bot && !p.user_id.startsWith('bot-'),
     );
-  }, []);
+    if (!matchId || humanPlayers.length !== 2 || !localUserId || stateRef.current.winnerColor) {
+      setRoomReady(true);
+      clearOpponentForfeitTimer();
+      return;
+    }
+
+    const opponent = humanPlayers.find((p) => p.user_id !== localUserId);
+    if (!opponent) {
+      setRoomReady(false);
+      clearOpponentForfeitTimer();
+      return;
+    }
+
+    const onlineIds = new Set(presence.map((p) => p.userId));
+    const selfOnline = onlineIds.has(localUserId);
+    const opponentOnline = onlineIds.has(opponent.user_id);
+    const bothPresent = selfOnline && opponentOnline;
+
+    if (opponentOnline) opponentWasPresentRef.current = true;
+    setRoomReady(bothPresent);
+
+    if (bothPresent || leavingRef.current || stateRef.current.winnerColor) {
+      clearOpponentForfeitTimer();
+      return;
+    }
+
+    if (
+      selfOnline &&
+      opponentWasPresentRef.current &&
+      !opponentOnline &&
+      !opponentForfeitTimerRef.current &&
+      !opponentForfeitInFlightRef.current
+    ) {
+      opponentForfeitTimerRef.current = setTimeout(() => {
+        opponentForfeitTimerRef.current = null;
+        if (leavingRef.current || stateRef.current.winnerColor || opponentForfeitInFlightRef.current) return;
+        opponentForfeitInFlightRef.current = true;
+        void claimOpponentLeft(matchId, opponent.user_id).then((result) => {
+          opponentForfeitInFlightRef.current = false;
+          if (result?.boardState) {
+            loadGame(normalizeMatchBoardState(result.boardState, matchPlayersRef.current, myColorRef.current));
+          }
+        });
+      }, OPPONENT_ABSENCE_GRACE_MS);
+    }
+  }, [clearOpponentForfeitTimer, loadGame, matchId]);
 
   // ── Effect: Solo init - new game when mount or profile settles. ──
   useEffect(() => {
@@ -200,6 +290,8 @@ export default function GameScreen() {
         return { data: { session: null } };
       });
       if (!session) return;
+      localUserIdRef.current = session.user.id;
+      setLocalUserId(session.user.id);
       supabase.realtime.setAuth(session.access_token);
 
       const match = await getMatch(matchId);
@@ -213,69 +305,94 @@ export default function GameScreen() {
       matchPlayersRef.current = matchPlayers;
       const isBotBacked = matchPlayers.some((p) => p.is_bot) ||
         match.board_state.players.some((p) => p.isAI);
+      const onlineHumanCount = matchPlayers.filter((p) => !p.is_bot && !p.user_id.startsWith('bot-')).length;
+      const shouldRequirePresence = !isBotBacked && gameMode === '2p' && onlineHumanCount === 2;
+      const firstHuman = matchPlayers.find((p) => !p.is_bot && !p.user_id.startsWith('bot-'));
       setBotBackedMatch(isBotBacked);
+      setBotDriverUserId(firstHuman?.user_id ?? null);
+      setRequiresRoomPresence(shouldRequirePresence);
+      setRoomReady(!shouldRequirePresence);
       myColorRef.current = me.color;
       loadGame(normalizeMatchBoardState(match.board_state, matchPlayers, me.color));
 
-      if (!isBotBacked) {
-        unsubscribeRealtime = subscribeMatch(matchId, (newBoardState) => {
-          if (!shouldHydrateRemoteBoard()) return;
-          loadGame(normalizeMatchBoardState(newBoardState, matchPlayersRef.current, myColorRef.current));
-        });
-      }
+      unsubscribeRealtime = subscribeMatch(matchId, applyRealtimeEvent, (status) => {
+        if (status === 'subscribed') void reloadMatchSnapshot();
+        if (status === 'error' || status === 'timed_out') {
+          console.warn('[game] match broadcast status:', status);
+        }
+      }, shouldRequirePresence ? {
+        self: {
+          userId: session.user.id,
+          color: me.color,
+          username: profile?.username,
+        },
+        onPresence: handleRoomPresence,
+      } : undefined);
+      if (!shouldRequirePresence) setRoomPresence([]);
     };
 
     init();
-    return () => { unsubscribeRealtime?.(); };
-  }, [isSoloMatchId, matchId, loadGame, shouldHydrateRemoteBoard]);
-
-  // Realtime should be the fast path, but polling prevents a stuck board if a
-  // mobile socket drops or the channel fails to join.
-  useEffect(() => {
-    if (isSoloMatchId || botBackedMatch || !matchId || !myColor) return;
-
-    let cancelled = false;
-    const poll = async () => {
-      const match = await getMatch(matchId);
-      if (cancelled || !match) return;
-
-      if (!shouldHydrateRemoteBoard()) return;
-
-      loadGame(normalizeMatchBoardState(match.board_state, matchPlayersRef.current, myColorRef.current));
-    };
-
-    const interval = setInterval(poll, 1800);
     return () => {
-      cancelled = true;
-      clearInterval(interval);
+      clearOpponentForfeitTimer();
+      unsubscribeRealtime?.();
     };
-  }, [isSoloMatchId, botBackedMatch, matchId, myColor, loadGame, shouldHydrateRemoteBoard]);
+  }, [
+    applyRealtimeEvent,
+    clearOpponentForfeitTimer,
+    gameMode,
+    handleRoomPresence,
+    isSoloMatchId,
+    loadGame,
+    matchId,
+    profile?.username,
+    reloadMatchSnapshot,
+  ]);
 
   const currentPlayer: Player | undefined = state.players[state.currentPlayerIdx];
   const perspectiveColor = getPerspectiveColor(state, myColor);
+  const isDrivenBotTurn =
+    !isSoloMatchId &&
+    !!botBackedMatch &&
+    !!currentPlayer?.isAI &&
+    !!localUserId &&
+    localUserId === botDriverUserId;
 
   const isMyTurn = isLocalBotGame
     ? !!currentPlayer && !currentPlayer.isAI
-    : !!currentPlayer && currentPlayer.color === myColor;
+    : !!currentPlayer && !currentPlayer.isAI && currentPlayer.color === myColor && (!requiresRoomPresence || roomReady);
 
   const shouldRunRollTimer =
     state.status === 'awaiting_roll' &&
     !state.winnerColor &&
     !!currentPlayer &&
-    (isLocalBotGame ? isMyTurn : !!matchId && !!myColor);
+    !currentPlayer.isAI &&
+    (isLocalBotGame ? isMyTurn : !!matchId && !!myColor && (!requiresRoomPresence || roomReady));
 
   // ── Effect: dice tumble has played out - settle the value. ──
   // Solo: use local RNG after a fixed timeout.
   // Multiplayer: call roll-dice EF, wait for response, then settle.
   useEffect(() => {
     if (state.status !== 'rolling') return;
-    if (!isLocalBotGame && !isMyTurn) return; // opponent's roll - we'll get it via Realtime
+    if (!isLocalBotGame && !isMyTurn && !isDrivenBotTurn) return; // opponent's roll - we'll get it via Realtime
 
-    if (isLocalBotGame) {
+    if (isLocalBotGame || isDrivenBotTurn) {
       const t = setTimeout(() => {
         finishRoll();
         haptics.medium();
         sound.play('roll');
+        if (isDrivenBotTurn && matchId) {
+          setTimeout(() => {
+            const nextState = useGameStore.getState().state;
+            const nextPlayer = nextState.players[nextState.currentPlayerIdx];
+            if (nextState.status !== 'awaiting_move' || !nextPlayer?.isAI) {
+              void syncBoardStateServer(matchId, nextState).then((result) => {
+                if (result?.boardState) {
+                  loadGame(normalizeMatchBoardState(result.boardState, matchPlayersRef.current, myColorRef.current));
+                }
+              });
+            }
+          }, 0);
+        }
       }, ROLL_ANIM_MS);
       return () => clearTimeout(t);
     }
@@ -311,7 +428,7 @@ export default function GameScreen() {
       }, wait);
     });
     return () => { cancelled = true; };
-  }, [state.status, isMyTurn, isLocalBotGame, matchId, finishRoll, loadGame]);
+  }, [state.status, isMyTurn, isLocalBotGame, isDrivenBotTurn, matchId, finishRoll, loadGame]);
 
   // ── Effect: roll timer - skip turn if a player does not roll in time. ──
   useEffect(() => {
@@ -357,26 +474,26 @@ export default function GameScreen() {
 
   // ── Effect: AI is awaiting_roll - schedule a roll (solo only). ──
   useEffect(() => {
-    if (!isLocalBotGame) return;
+    if (!isLocalBotGame && !isDrivenBotTurn) return;
     if (state.status !== 'awaiting_roll' || !currentPlayer?.isAI) return;
     if (state.winnerColor) return;
     const t = setTimeout(() => {
       beginRoll();
-    }, THINK_MS);
+    }, botThinkDelay());
     return () => clearTimeout(t);
-  }, [isLocalBotGame, state.status, currentPlayer, state.winnerColor, beginRoll]);
+  }, [isLocalBotGame, isDrivenBotTurn, state.status, currentPlayer, state.winnerColor, beginRoll]);
 
   // ── Effect: AI is awaiting_move - schedule a pick (solo only). ──
   useEffect(() => {
-    if (!isLocalBotGame) return;
+    if (!isLocalBotGame && !isDrivenBotTurn) return;
     if (state.status !== 'awaiting_move' || !currentPlayer?.isAI) return;
     if (state.winnerColor) return;
     const t = setTimeout(() => {
       const pick = chooseMove(state, currentPlayer.color);
       if (pick) selectMove(pick);
-    }, THINK_MS);
+    }, botThinkDelay());
     return () => clearTimeout(t);
-  }, [isLocalBotGame, state, currentPlayer, selectMove]);
+  }, [isLocalBotGame, isDrivenBotTurn, state, currentPlayer, selectMove]);
 
   // ── Effect: token movement anim has played - settle into next status. ──
   useEffect(() => {
@@ -396,8 +513,19 @@ export default function GameScreen() {
               if (match) loadGame(normalizeMatchBoardState(match.board_state, matchPlayersRef.current, myColorRef.current));
             });
           }
-          releaseLocalMoveCommit();
         });
+        return;
+      }
+      if (!isLocalBotGame && isDrivenBotTurn && matchId) {
+        finishMoveAnim();
+        setTimeout(() => {
+          const nextState = useGameStore.getState().state;
+          void syncBoardStateServer(matchId, nextState).then((result) => {
+            if (result?.boardState) {
+              loadGame(normalizeMatchBoardState(result.boardState, matchPlayersRef.current, myColorRef.current));
+            }
+          });
+        }, 0);
         return;
       }
       finishMoveAnim();
@@ -410,11 +538,11 @@ export default function GameScreen() {
     state.status,
     state.lastMove,
     isLocalBotGame,
+    isDrivenBotTurn,
     isMyTurn,
     matchId,
     finishMoveAnim,
     loadGame,
-    releaseLocalMoveCommit,
   ]);
 
   // ── Effect: winner -> celebrate, then navigate to result. ──
@@ -519,7 +647,6 @@ export default function GameScreen() {
     const uniqueValues = Array.from(new Set(opts.map((o) => o.dieValue)));
     if (uniqueValues.length === 1) {
       setPickerForToken(null);
-      if (!isLocalBotGame) holdLocalMoveCommit();
       selectMove(opts[0]);
       return;
     }
@@ -534,7 +661,6 @@ export default function GameScreen() {
     setPickerForToken(null);
     if (move) {
       haptics.tap();
-      if (!isLocalBotGame) holdLocalMoveCommit();
       selectMove(move);
     }
   }
@@ -603,7 +729,12 @@ export default function GameScreen() {
   })();
 
   const byCorner = seatPlayersByCorner(state.players, perspectiveColor);
-  const hint = makeHint(state, isMyTurn, currentPlayer);
+  const roomPresenceCount = roomPresence.length;
+  const hint = requiresRoomPresence && !roomReady && !state.winnerColor
+    ? opponentWasPresentRef.current
+      ? 'Opponent disconnected - waiting to reconnect...'
+      : `Waiting for opponent to join the table (${roomPresenceCount}/2).`
+    : makeHint(state, isMyTurn, currentPlayer);
   const timerProgress = shouldRunRollTimer ? rollTimerRemaining / ROLL_TIMEOUT_MS : null;
   const timerSeconds = shouldRunRollTimer ? Math.ceil(rollTimerRemaining / 1000) : null;
   const localPlayer = byCorner.bottomLeft;
@@ -1168,10 +1299,11 @@ function normalizeMatchBoardState(
   matchPlayers: MatchPlayerEntry[],
   anchorColor?: Color | null,
 ): ReturnType<typeof useGameStore.getState>['state'] {
-  if (matchPlayers.length === 0) return boardState;
+  const versionedBoardState = withBoardVersion(boardState);
+  if (matchPlayers.length === 0) return versionedBoardState;
   const byColor = new Map(matchPlayers.map((p) => [p.color, p]));
   let changed = false;
-  let players = boardState.players.map((player) => {
+  let players = versionedBoardState.players.map((player) => {
     const matchPlayer = byColor.get(player.color);
     if (!matchPlayer) return player;
     const isAI = !!matchPlayer.is_bot;
@@ -1195,7 +1327,9 @@ function normalizeMatchBoardState(
     changed = true;
   }
 
-  return changed ? { ...boardState, players, lastRollByColor: remapLastRolls(boardState.lastRollByColor, players) } : boardState;
+  return changed
+    ? { ...versionedBoardState, players, lastRollByColor: remapLastRolls(versionedBoardState.lastRollByColor, players) }
+    : versionedBoardState;
 }
 
 function recolorPlayer(player: Player, color: Color): Player {
