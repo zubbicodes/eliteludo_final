@@ -5,16 +5,15 @@ import {
   Group,
   LinearGradient,
   Path,
-  RadialGradient,
   Rect,
   RoundedRect,
   Skia,
   Text as SkiaText,
   useFont,
-  vec,
+  vec
 } from "@shopify/react-native-skia";
 import { useEffect, useMemo } from "react";
-import { View } from "react-native";
+import { Image } from "react-native";
 import {
   Easing,
   useDerivedValue,
@@ -990,158 +989,22 @@ export function RoyalCurrencyIcon({
   kind: "coin" | "gem";
   size?: number;
 }) {
-  const shimmer = useLoop(kind === "coin" ? 1900 : 2300);
-  const shineX = useDerivedValue(
-    () => size * (0.18 + shimmer.value * 0.58),
-  );
-  const coinGlowOpacity = useDerivedValue(
-    () => 0.36 + shimmer.value * 0.46,
-  );
-  const canvasPadding = kind === "coin" ? size * 0.22 : 0;
-  const canvasSize = size + canvasPadding * 2;
-  const cx = canvasSize / 2;
-  const cy = canvasSize / 2;
-  const gem = useMemo(() => royalGemPath(size), [size]);
-  const crown = useMemo(
-    () => crownCoinPath(cx, cy + size * 0.03, size * 0.27),
-    [cx, cy, size],
-  );
-  const coinReeds = useMemo(
-    () => coinReedsPath(cx, cy, size * 0.405, size * 0.455, 36),
-    [cx, cy, size],
-  );
-  const coinOrnaments = useMemo(
-    () => coinOrnamentPath(cx, cy, size * 0.275, size * 0.027, 12),
-    [cx, cy, size],
-  );
-  const coinStar = useMemo(
-    () => coinStarPath(cx, cy + size * 0.205, size * 0.042),
-    [cx, cy, size],
-  );
+  if (kind === "gem") {
+    return (
+      <Image
+        source={require("../../assets/crowns/gem.png")}
+        style={{ width: size, height: size }}
+        resizeMode="contain"
+      />
+    );
+  }
 
   return (
-    <View style={{ width: size, height: size, overflow: "visible" }} pointerEvents="none">
-      <Canvas
-        style={{
-          position: "absolute",
-          left: -canvasPadding,
-          top: -canvasPadding,
-          width: canvasSize,
-          height: canvasSize,
-        }}
-        pointerEvents="none"
-      >
-      {kind === "coin" ? (
-        <Group>
-          <Circle
-            cx={cx}
-            cy={cy}
-            r={size * 0.405}
-            color="#F2C95B"
-            opacity={coinGlowOpacity}
-          >
-            <BlurMask blur={size * 0.12} style="normal" />
-          </Circle>
-          <Circle cx={cx + 1.4} cy={cy + 2.2} r={size * 0.455} color="#000000" opacity={0.6}>
-            <BlurMask blur={3.5} style="normal" />
-          </Circle>
-          <Circle cx={cx} cy={cy} r={size * 0.46}>
-            <RadialGradient
-              c={vec(cx - size * 0.14, cy - size * 0.2)}
-              r={size * 0.5}
-              colors={["#FFF1B8", "#D4AF37", "#8A6414", "#F3D679"]}
-              positions={[0, 0.36, 0.76, 1]}
-            />
-          </Circle>
-          <Path
-            path={coinReeds}
-            color="#241504"
-            style="stroke"
-            strokeWidth={Math.max(0.45, size * 0.016)}
-            opacity={0.68}
-          />
-          <Circle cx={cx} cy={cy} r={size * 0.405}>
-            <RadialGradient
-              c={vec(cx - size * 0.11, cy - size * 0.17)}
-              r={size * 0.43}
-              colors={["#FFF1B8", "#D4AF37", "#855B10"]}
-            />
-          </Circle>
-          <Circle cx={cx} cy={cy} r={size * 0.342} color="#74500E" />
-          <Circle cx={cx} cy={cy} r={size * 0.315}>
-            <RadialGradient
-              c={vec(cx - size * 0.08, cy - size * 0.12)}
-              r={size * 0.34}
-              colors={["#2D2D2B", "#141414", "#080808"]}
-            />
-          </Circle>
-          <Path path={coinOrnaments} color="#DDB84B" opacity={0.9} />
-          <Circle
-            cx={cx}
-            cy={cy}
-            r={size * 0.225}
-            color="#E2BF59"
-            style="stroke"
-            strokeWidth={Math.max(0.65, size * 0.024)}
-            opacity={0.82}
-          />
-          <Path path={crown} color="#000000" transform={[{ translateY: size * 0.025 }]} opacity={0.75} />
-          <Path path={crown}>
-            <LinearGradient
-              start={vec(cx - size * 0.12, cy - size * 0.16)}
-              end={vec(cx + size * 0.12, cy + size * 0.12)}
-              colors={["#FFF1B8", "#D4AF37", "#84580E"]}
-            />
-          </Path>
-          <Path path={coinStar} color="#F6DA79" opacity={0.9} />
-          <Circle
-            cx={cx}
-            cy={cy}
-            r={size * 0.425}
-            color="#FFD86A"
-            style="stroke"
-            strokeWidth={Math.max(1.2, size * 0.045)}
-            opacity={coinGlowOpacity}
-          >
-            <BlurMask blur={size * 0.075} style="normal" />
-          </Circle>
-          <Circle
-            cx={cx}
-            cy={cy}
-            r={size * 0.445}
-            color="#FFE99B"
-            style="stroke"
-            strokeWidth={Math.max(0.55, size * 0.018)}
-            opacity={coinGlowOpacity}
-          />
-        </Group>
-      ) : (
-        <Group>
-          <Path path={gem} color="#031A0C" transform={[{ translateY: 2.5 }]} opacity={0.7}>
-            <BlurMask blur={3} style="normal" />
-          </Path>
-          <Path path={gem}>
-            <LinearGradient
-              start={vec(size * 0.2, size * 0.12)}
-              end={vec(size * 0.82, size * 0.88)}
-              colors={["#B9FF9B", "#20C957", "#08752F", "#043D1D"]}
-            />
-          </Path>
-          <Path path={gem} color="#D4FFB7" style="stroke" strokeWidth={1.2} opacity={0.78} />
-          <Path
-            path={royalGemFacetPath(size)}
-            color="#D8FFCF"
-            style="stroke"
-            strokeWidth={0.9}
-            opacity={0.55}
-          />
-          <Circle cx={shineX} cy={size * 0.28} r={size * 0.055} color="#FFFFFF" opacity={0.72}>
-            <BlurMask blur={2} style="normal" />
-          </Circle>
-        </Group>
-      )}
-      </Canvas>
-    </View>
+    <Image
+      source={require("../../assets/crowns/coin.png")}
+      style={{ width: size, height: size }}
+      resizeMode="contain"
+    />
   );
 }
 

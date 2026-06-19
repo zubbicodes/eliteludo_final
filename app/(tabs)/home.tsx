@@ -492,7 +492,9 @@ function CurrencyPill({
           <RoyalCurrencyIcon kind="coin" size={36} />
         </View>
       ) : (
-        <RoyalCurrencyIcon kind="gem" size={34} />
+        <View style={styles.gemPillEdge}>
+          <RoyalCurrencyIcon kind="gem" size={34} />
+        </View>
       )}
       <Text style={styles.currencyText}>{value}</Text>
       <View style={styles.plusBubble}>
@@ -962,9 +964,9 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   currencyPill: {
-    height: 34,
+    height: 30,
     minWidth: 78,
-    borderRadius: 17,
+    borderRadius: 15,
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "rgba(14,8,3,0.72)",
@@ -983,6 +985,14 @@ const styles = StyleSheet.create({
   coinPillEdge: {
     width: 36,
     height: 36,
+    marginLeft: -9,
+    marginRight: -1,
+    zIndex: 2,
+    transform: [{ rotate: "-11deg" }, { scale: 1.05 }],
+  },
+  gemPillEdge: {
+    width: 34,
+    height: 34,
     marginLeft: -9,
     marginRight: -1,
     zIndex: 2,
