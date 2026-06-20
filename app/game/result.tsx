@@ -23,12 +23,13 @@ const PLAYER_HEX: Record<Color, string> = {
 };
 
 export default function ResultScreen() {
-  const { winner, matchId, entryFee, citySlug, humanColor } = useLocalSearchParams<{
+  const { winner, matchId, entryFee, citySlug, humanColor, mode } = useLocalSearchParams<{
     winner: Color;
     matchId?: string;
     entryFee?: string;
     citySlug?: string;
     humanColor?: Color;
+    mode?: string;
   }>();
   const hydrateProfile = useProfileStore((s) => s.hydrate);
   const playerColor = humanColor || 'red';
@@ -115,7 +116,7 @@ export default function ResultScreen() {
         {/* Actions */}
         <Animated.View entering={FadeInDown.delay(600).duration(500)} style={styles.actions}>
           <Pressable
-            onPress={() => router.replace('/game/new')}
+            onPress={() => router.replace({ pathname: '/game/new', params: { mode } })}
             style={({ pressed }) => [styles.primaryOuter, { opacity: pressed ? 0.88 : 1 }]}
           >
             <LinearGradient

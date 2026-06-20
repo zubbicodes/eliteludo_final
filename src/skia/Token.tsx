@@ -109,7 +109,11 @@ export function Token({
   return (
     <Animated.View
       pointerEvents={selectable ? 'auto' : 'none'}
-      style={[styles.container, { width: size, height: size }, containerStyle]}
+      style={[
+        styles.container,
+        { width: size, height: size, zIndex: hopPath ? 40 : highlighted ? 30 : 10 },
+        containerStyle,
+      ]}
     >
       <Pressable disabled={!selectable} onPress={onPress} style={styles.fill}>
         <Animated.View

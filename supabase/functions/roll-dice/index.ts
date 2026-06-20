@@ -90,7 +90,8 @@ function addRoll(state: GameState, value: number): GameState {
     ...state,
     dicePool: [...state.dicePool, value],
     consecutiveSixes: sixes,
-    status: "awaiting_move",
+    // Bank a six and take its bonus roll before any token is moved.
+    status: isSix ? "awaiting_roll" : "awaiting_move",
     lastRollByColor,
   };
 }

@@ -15,13 +15,27 @@ import { assignRuntimeColors, isOppositePair, oppositeColor } from '../src/game/
 import { visualCornerForColor } from '../src/game/perspective';
 import type { GameState, MoveOption, TokenId } from '../src/game/types';
 
-test('rolling a six creates a playable move and adds to dice pool', () => {
+test('rolling a six banks it and requires the bonus roll before moving', () => {
   const state = makeInitialGameState('red', 1);
   const next = addRoll(state, 6);
 
-  assert.equal(next.status, 'awaiting_move');
+  assert.equal(next.status, 'awaiting_roll');
   assert.deepEqual(next.dicePool, [6]);
   assert.equal(next.currentPlayerIdx, state.currentPlayerIdx);
+});
+
+test('bonus roll settles both dice into the playable pool', () => {
+  let state = makeInitialGameState('red', 1);
+  state.players[0].tokens[0].location = { kind: 'track', index: COLOR_START_INDEX.red };
+  state = addRoll(state, 6);
+  state = addRoll(state, 3);
+
+  assert.equal(state.status, 'awaiting_move');
+  assert.deepEqual(state.dicePool, [6, 3]);
+  assert.deepEqual(
+    [...new Set(getValidMoves(state, 'red').map((move) => move.dieValue))].sort(),
+    [3, 6],
+  );
 });
 
 test('three consecutive sixes forfeits the turn', () => {
@@ -128,31 +142,33 @@ test('checkWin returns true when all tokens are finished', () => {
   assert.equal(checkWin(state, 'red'), true);
 });
 
-test('moving with a six grants a bonus roll after the move', () => {
+test('spending a banked six does not grant another bonus roll', () => {
   const state: GameState = makeInitialGameState('red', 1);
-  const rolled = addRoll(state, 6);
+  const rolled = addRoll(addRoll(state, 6), 3);
   const move = getValidMoves(rolled, 'red').find((m) => m.tokenId === 'red-0' && m.dieValue === 6);
 
   assert.ok(move);
   const moved = applyMove(rolled, move);
   const settled = finishMove(moved);
 
-  assert.equal(settled.status, 'awaiting_roll');
+  assert.equal(settled.status, 'awaiting_move');
   assert.equal(settled.currentPlayerIdx, 0);
-  assert.deepEqual(settled.dicePool, []);
+  assert.deepEqual(settled.dicePool, [3]);
 });
 
-test('six can open a token and the next non-six ends the turn after moving', () => {
+test('six and its bonus result are both played before the turn ends', () => {
   let state: GameState = makeInitialGameState('red', 1);
   state = addRoll(state, 6);
+  state = addRoll(state, 3);
+
   let move = getValidMoves(state, 'red').find((m) => m.tokenId === 'red-0' && m.dieValue === 6);
   assert.ok(move);
   state = finishMove(applyMove(state, move));
 
-  assert.equal(state.status, 'awaiting_roll');
+  assert.equal(state.status, 'awaiting_move');
   assert.equal(state.currentPlayerIdx, 0);
+  assert.deepEqual(state.dicePool, [3]);
 
-  state = addRoll(state, 3);
   move = getValidMoves(state, 'red').find((m) => m.tokenId === 'red-0' && m.dieValue === 3);
   assert.ok(move);
   state = finishMove(applyMove(state, move));
@@ -172,6 +188,12 @@ test('runtime 1v1 color assignment always uses opposite corners', () => {
 test('runtime 4p color assignment uses each color exactly once', () => {
   const seats = assignRuntimeColors(4);
   assert.deepEqual([...seats].sort(), ['blue', 'green', 'red', 'yellow']);
+});
+
+test('runtime 3p color assignment creates three unique seats', () => {
+  const seats = assignRuntimeColors(3);
+  assert.equal(seats.length, 3);
+  assert.equal(new Set(seats).size, 3);
 });
 
 test('perspective mapping places each assigned color bottom-left', () => {

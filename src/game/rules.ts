@@ -113,7 +113,9 @@ export function addRoll(state: GameState, value: number): GameState {
     ...state,
     dicePool: [...state.dicePool, value],
     consecutiveSixes: sixes,
-    status: 'awaiting_move',
+    // A six is banked in the pool and the rolling phase continues. The player
+    // chooses moves only after the bonus roll produces a non-six.
+    status: isSix ? 'awaiting_roll' : 'awaiting_move',
     lastRollByColor,
   };
 }
@@ -252,7 +254,6 @@ export function applyMove(state: GameState, move: MoveOption): GameState {
 export function finishMove(state: GameState): GameState {
   const move = state.lastMove;
   const earnedBonusRoll = !!move && (
-    move.dieValue === 6 ||
     move.captures.length > 0 ||
     move.to.kind === 'finished'
   );

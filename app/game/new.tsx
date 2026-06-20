@@ -7,9 +7,10 @@ export default function NewGame() {
 
   useEffect(() => {
     const matchId = 'solo-' + Date.now();
+    const playerMode = mode === '3p' ? '3p' : mode === '4p' ? '4p' : '2p';
     router.replace({
       pathname: '/game/[matchId]',
-      params: { matchId, mode: mode === '2p' ? '2p' : '4p' },
+      params: { matchId, mode: playerMode },
     } as never);
   }, [mode, router]);
 

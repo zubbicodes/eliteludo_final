@@ -202,7 +202,6 @@ function applyMove(state: GameState, move: MoveOption): GameState {
 function finishMove(state: GameState): GameState {
   const move = state.lastMove;
   const earnedBonusRoll = !!move && (
-    move.dieValue === 6 ||
     move.captures.length > 0 ||
     move.to.kind === "finished"
   );

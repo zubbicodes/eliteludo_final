@@ -6,6 +6,7 @@ import {
   Alert,
   Dimensions,
   Image,
+  Modal,
   Pressable,
   StyleSheet,
   Text,
@@ -36,6 +37,7 @@ import {
   RoyalHomeBackdrop,
   RoyalSettingsIcon,
 } from "@/src/skia/HomeArtwork";
+import { OrnateTokenCanvas } from "@/src/skia/OrnateToken";
 import { useProfileStore } from "@/src/stores/profile";
 import { useWalletStore } from "@/src/stores/wallet";
 import { colors } from "@/src/theme/colors";
@@ -54,6 +56,7 @@ const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
 type HomeView = "modes" | "clubs";
 type ModeId = "2p" | "4p" | "private" | "friends" | "ai";
+type OfflinePlayerCount = 2 | 3 | 4;
 
 type Mode = {
   id: ModeId;
@@ -287,6 +290,7 @@ export default function HomeScreen() {
   const hydrateProfile = useProfileStore((s) => s.hydrate);
 
   const [view, setView] = useState<HomeView>("modes");
+  const [offlinePickerOpen, setOfflinePickerOpen] = useState(false);
   const [selectedMode, setSelectedMode] = useState<ModeId>("2p");
   const [activeClub, setActiveClub] = useState(0);
   const [rewardOpen, setRewardOpen] = useState(false);
@@ -332,7 +336,7 @@ export default function HomeScreen() {
     (mode: ModeId) => {
       haptics.tap();
       if (mode === "ai") {
-        router.push("/game/new");
+        setOfflinePickerOpen(true);
         return;
       }
       if (mode === "private") {
@@ -342,6 +346,18 @@ export default function HomeScreen() {
       setSelectedMode(mode);
       setView("clubs");
       setActiveClub(0);
+    },
+    [router],
+  );
+
+  const startOfflineGame = useCallback(
+    (playerCount: OfflinePlayerCount) => {
+      haptics.tap();
+      setOfflinePickerOpen(false);
+      router.push({
+        pathname: "/game/new",
+        params: { mode: `${playerCount}p` },
+      } as never);
     },
     [router],
   );
@@ -387,6 +403,13 @@ export default function HomeScreen() {
     <View style={styles.root}>
       <View style={StyleSheet.absoluteFill}>
         <RoyalHomeBackdrop width={viewport.width} height={viewport.height} />
+      </View>
+      <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+        <Image
+          source={Images.bgHome}
+          resizeMode="cover"
+          style={styles.homeTreeOverlay}
+        />
       </View>
 
       <Header
@@ -467,12 +490,119 @@ export default function HomeScreen() {
           setRewardOpen(false);
         }}
       />
+      <OfflinePlayerPicker
+        visible={offlinePickerOpen}
+        onClose={() => setOfflinePickerOpen(false)}
+        onSelect={startOfflineGame}
+      />
       <View style={[styles.bannerAdWrap, { bottom: insets.bottom + 84 }]}>
         <BannerAd
           unitId={homeBannerAdUnitId}
           size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER}
         />
       </View>
+    </View>
+  );
+}
+
+function OfflinePlayerPicker({
+  visible,
+  onClose,
+  onSelect,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  onSelect: (count: OfflinePlayerCount) => void;
+}) {
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      statusBarTranslucent
+      onRequestClose={onClose}
+    >
+      <View style={styles.offlineModalRoot}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Close offline game options"
+          onPress={onClose}
+          style={StyleSheet.absoluteFill}
+        />
+        <View style={styles.offlinePanel}>
+          <LinearGradient
+            colors={["rgba(63,31,12,0.98)", "rgba(20,8,4,0.99)"]}
+            style={StyleSheet.absoluteFill}
+          />
+          <View style={styles.offlinePanelInset} />
+          <Pressable
+            onPress={onClose}
+            accessibilityRole="button"
+            accessibilityLabel="Close"
+            hitSlop={10}
+            style={styles.offlineClose}
+          >
+            <Ionicons name="close" size={20} color="#FFF1BE" />
+          </Pressable>
+
+          <Text style={styles.offlineEyebrow}>OFFLINE TABLE</Text>
+          <Text style={styles.offlineTitle}>CHOOSE PLAYERS</Text>
+          <Text style={styles.offlineSubtitle}>You’ll play against royal computer rivals.</Text>
+
+          <View style={styles.offlineOptions}>
+            {([2, 3, 4] as const).map((count) => (
+              <Pressable
+                key={count}
+                onPress={() => onSelect(count)}
+                accessibilityRole="button"
+                accessibilityLabel={`${count} players, you and ${count - 1} computer ${count === 2 ? "opponent" : "opponents"}`}
+                style={({ pressed }) => [
+                  styles.offlineOption,
+                  pressed && styles.offlineOptionPressed,
+                ]}
+              >
+                <OfflineTokenCluster count={count} />
+                <Text style={styles.offlineCount}>{count}</Text>
+                <Text style={styles.offlinePlayersLabel}>PLAYERS</Text>
+                <View style={styles.offlineBotPill}>
+                  <Ionicons name="hardware-chip" size={11} color="#EACB6A" />
+                  <Text style={styles.offlineBotText}>{count - 1} {count === 2 ? "BOT" : "BOTS"}</Text>
+                </View>
+              </Pressable>
+            ))}
+          </View>
+          <Text style={styles.offlineHint}>No internet or coins required</Text>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function OfflineTokenCluster({ count }: { count: OfflinePlayerCount }) {
+  const tokenSize = count === 4 ? 25 : 32;
+  const overlap = count === 4 ? -10 : -8;
+
+  return (
+    <View style={styles.offlinePlayerGlyphs}>
+      {Array.from({ length: count }).map((_, index) => (
+        <View
+          key={index}
+          style={[
+            styles.offlineToken,
+            {
+              width: tokenSize,
+              height: tokenSize,
+              marginLeft: index === 0 ? 0 : overlap,
+              zIndex: count - index,
+            },
+          ]}
+        >
+          <OrnateTokenCanvas
+            color={(["red", "green", "yellow", "blue"] as const)[index]}
+            size={tokenSize}
+          />
+        </View>
+      ))}
     </View>
   );
 }
@@ -987,6 +1117,147 @@ function PrizeChest() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: "#080104" },
+  homeTreeOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    width: "100%",
+    height: "100%",
+    opacity: 0.5,
+  },
+  offlineModalRoot: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 18,
+    backgroundColor: "rgba(5,1,2,0.82)",
+  },
+  offlinePanel: {
+    width: "100%",
+    maxWidth: 390,
+    borderRadius: 28,
+    borderWidth: 2,
+    borderColor: "#D7AB43",
+    overflow: "hidden",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingTop: 30,
+    paddingBottom: 24,
+    boxShadow: "0 18px 42px rgba(0, 0, 0, 0.7)",
+  },
+  offlinePanelInset: {
+    ...StyleSheet.absoluteFillObject,
+    margin: 6,
+    borderRadius: 21,
+    borderWidth: 1,
+    borderColor: "rgba(255,230,151,0.2)",
+  },
+  offlineClose: {
+    position: "absolute",
+    top: 13,
+    right: 13,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(122,25,28,0.72)",
+    borderWidth: 1,
+    borderColor: "rgba(255,184,139,0.58)",
+    zIndex: 2,
+  },
+  offlineEyebrow: {
+    color: "#D9B65C",
+    fontFamily: fontFamilies.body,
+    fontSize: 9,
+    letterSpacing: 3.4,
+  },
+  offlineTitle: {
+    color: "#FFF0B5",
+    fontFamily: fontFamilies.heading,
+    fontSize: COMPACT_CLUB ? 21 : 24,
+    letterSpacing: 1.1,
+    paddingTop: 7,
+    textShadowColor: "rgba(226,175,55,0.42)",
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 8,
+  },
+  offlineSubtitle: {
+    color: "rgba(255,244,210,0.62)",
+    fontFamily: fontFamilies.body,
+    fontSize: 10,
+    textAlign: "center",
+    paddingTop: 7,
+  },
+  offlineOptions: {
+    width: "100%",
+    flexDirection: "row",
+    gap: 8,
+    paddingTop: 22,
+  },
+  offlineOption: {
+    flex: 1,
+    minWidth: 0,
+    height: COMPACT_CLUB ? 146 : 158,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 18,
+    borderWidth: 1.5,
+    borderColor: "rgba(225,181,73,0.55)",
+    backgroundColor: "rgba(75,34,13,0.7)",
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.12)",
+  },
+  offlineOptionPressed: {
+    opacity: 0.82,
+    transform: [{ scale: 0.96 }],
+    backgroundColor: "rgba(116,65,20,0.82)",
+  },
+  offlinePlayerGlyphs: {
+    height: 34,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  offlineToken: {
+    width: 32,
+    height: 32,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  offlineCount: {
+    color: "#FFE47D",
+    fontFamily: fontFamilies.heading,
+    fontSize: 38,
+    lineHeight: 43,
+    paddingTop: 5,
+  },
+  offlinePlayersLabel: {
+    color: "#FFF1C4",
+    fontFamily: fontFamilies.heading,
+    fontSize: 9,
+    letterSpacing: 1,
+  },
+  offlineBotPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    borderRadius: 10,
+    paddingHorizontal: 7,
+    paddingVertical: 4,
+    marginTop: 9,
+    backgroundColor: "rgba(4,2,1,0.42)",
+  },
+  offlineBotText: {
+    color: "#EACB6A",
+    fontFamily: fontFamilies.body,
+    fontSize: 8,
+    letterSpacing: 0.5,
+  },
+  offlineHint: {
+    color: "rgba(255,243,205,0.42)",
+    fontFamily: fontFamilies.body,
+    fontSize: 9,
+    letterSpacing: 0.8,
+    paddingTop: 17,
+  },
   bgTint: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(9,5,2,0.86)",

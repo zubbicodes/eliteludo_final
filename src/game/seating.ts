@@ -20,7 +20,7 @@ export function oppositeColor(color: Color): Color {
 }
 
 export function assignRuntimeColors(
-  playerCount: 2 | 4,
+  playerCount: 2 | 3 | 4,
   rng: () => number = Math.random,
 ): Color[] {
   if (playerCount === 2) {
@@ -28,7 +28,7 @@ export function assignRuntimeColors(
     return shuffle([...pair], rng);
   }
 
-  return shuffle([...COLORS], rng);
+  return shuffle([...COLORS], rng).slice(0, playerCount);
 }
 
 export function isOppositePair(a: Color, b: Color): boolean {

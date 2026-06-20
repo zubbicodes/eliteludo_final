@@ -9,7 +9,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert,
   Image,
   ImageBackground,
   Modal,
@@ -27,7 +26,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { TokenDicePicker } from '@/src/components/TokenDicePicker';
 import { getAvatar } from '@/src/constants/profile';
 import { botThinkDelay } from '@/src/game/bots';
-import { BOARD_SIZE, cellForToken } from '@/src/game/board';
+import { cellForToken } from '@/src/game/board';
 import { cellForPerspective, visualCornerForColor } from '@/src/game/perspective';
 import { pathCellsForMove } from '@/src/game/rules';
 import { assignRuntimeColors, isOppositePair, oppositeColor } from '@/src/game/seating';
@@ -52,7 +51,7 @@ import {
   type MatchPresence,
   type MatchRealtimeEvent,
 } from '@/src/supabase/matchRealtime';
-import { BoardCanvas } from '@/src/skia/Board';
+import { BoardCanvas, boardGeometry } from '@/src/skia/Board';
 import { Dice } from '@/src/skia/Dice';
 import { Particles, type Burst } from '@/src/skia/Particles';
 import { Token as TokenView } from '@/src/skia/Token';
@@ -103,7 +102,7 @@ export default function GameScreen() {
     citySlug?: string;
   }>();
   const { width, height } = useWindowDimensions();
-  const gameMode = mode === '4p' ? '4p' : '2p';
+  const gameMode = mode === '3p' ? '3p' : mode === '4p' ? '4p' : '2p';
 
   // Solo = client-only path; multiplayer = server dice + Realtime sync
   const isSoloMatchId = !matchId || matchId.startsWith('solo-');
@@ -173,11 +172,11 @@ export default function GameScreen() {
   }, [matchId, gameMode]);
 
   const boardSize = Math.min(
-    width - spacing.md * 2,
-    height * (Platform.OS === 'android' ? 0.4 : 0.46),
-    Platform.OS === 'android' ? 350 : 380,
+    width - spacing.xs,
+    height * (Platform.OS === 'android' ? 0.48 : 0.5),
+    430,
   );
-  const cellPx = boardSize / BOARD_SIZE;
+  const { inset: boardInset, cell: cellPx } = boardGeometry(boardSize);
   const tokenSize = cellPx * 0.98;
 
   const reloadMatchSnapshot = useCallback(async () => {
@@ -266,7 +265,7 @@ export default function GameScreen() {
   // ── Effect: Solo init - new game when mount or profile settles. ──
   useEffect(() => {
     if (!isSoloMatchId) return;
-    const targetCount = gameMode === '2p' ? 2 : 4;
+    const targetCount = gameMode === '2p' ? 2 : gameMode === '3p' ? 3 : 4;
     if (!localSeatColorsRef.current || localSeatColorsRef.current.length !== targetCount) {
       localSeatColorsRef.current = assignRuntimeColors(targetCount);
     }
@@ -275,7 +274,7 @@ export default function GameScreen() {
     const human = profile
       ? { name: profile.username, avatarId: profile.avatarId }
       : undefined;
-    newGame(humanColor, gameMode === '2p' ? 1 : 3, human, seatColors);
+    newGame(humanColor, targetCount - 1, human, seatColors);
   }, [isSoloMatchId, matchId, gameMode, newGame, profile]);
 
   // ── Effect: Multiplayer init - load from DB and subscribe to Realtime. ──
@@ -407,7 +406,6 @@ export default function GameScreen() {
         if (cancelled) return;
         if (!result) {
           loadGame({ ...stateRef.current, status: 'awaiting_roll' });
-          Alert.alert('Roll failed', 'Please try again.');
           return;
         }
         if (typeof result.value !== 'number') {
@@ -577,11 +575,12 @@ export default function GameScreen() {
           entryFee: entryFee ?? '0',
           citySlug: citySlug ?? '',
           humanColor: humanColor ?? '',
+          mode: gameMode,
         },
       });
     }, 1500);
     return () => clearTimeout(t);
-  }, [state.winnerColor, state.players, boardSize, isLocalBotGame, myColor, matchId, entryFee, citySlug]);
+  }, [state.winnerColor, state.players, boardSize, isLocalBotGame, myColor, matchId, entryFee, citySlug, gameMode]);
 
   // ── Effect: capture -> particle burst. ──
   useEffect(() => {
@@ -591,8 +590,8 @@ export default function GameScreen() {
     const moving = tokens.find((tt) => tt.id === move.tokenId);
     if (!moving) return;
     const dest = cellForPerspective(cellForToken(moving), perspectiveColor);
-    const cx = (dest.col + 0.5) * cellPx;
-    const cy = (dest.row + 0.5) * cellPx;
+    const cx = boardInset + (dest.col + 0.5) * cellPx;
+    const cy = boardInset + (dest.row + 0.5) * cellPx;
     const arriveMs = Math.max(1, hopsForMove(move.from, move.dieValue)) * HOP_MS;
     const baseId = `cap-${Date.now()}`;
     const captureColors: Color[] = move.captures
@@ -613,7 +612,7 @@ export default function GameScreen() {
       ]);
     }, arriveMs);
     return () => clearTimeout(t);
-  }, [state.lastMove, state.players, cellPx, perspectiveColor]);
+  }, [state.lastMove, state.players, boardInset, cellPx, perspectiveColor]);
 
   // ── Effect: prune stale bursts. ──
   useEffect(() => {
@@ -703,14 +702,14 @@ export default function GameScreen() {
     const hopPath = cells.map((c) => {
       const visual = cellForPerspective(c, perspectiveColor);
       return {
-        cx: (visual.col + 0.5) * cellPx,
-        cy: (visual.row + 0.5) * cellPx,
+        cx: boardInset + (visual.col + 0.5) * cellPx,
+        cy: boardInset + (visual.row + 0.5) * cellPx,
       };
     });
     const captureDelayMs = Math.max(0, hopPath.length - 1) * HOP_MS;
     const capturedIds = new Set(move.captures);
     return { movingTokenId: move.tokenId, hopPath, capturedIds, captureDelayMs };
-  }, [state.lastMove, state.players, cellPx, perspectiveColor]);
+  }, [state.lastMove, state.players, boardInset, cellPx, perspectiveColor]);
 
   const pickerValues = pickerForToken
     ? Array.from(
@@ -725,7 +724,10 @@ export default function GameScreen() {
     const tok = allTokens.find((t) => t.id === pickerForToken);
     if (!tok) return null;
     const cell = cellForPerspective(cellForToken(tok), perspectiveColor);
-    return { cx: (cell.col + 0.5) * cellPx, cy: (cell.row + 0.5) * cellPx };
+    return {
+      cx: boardInset + (cell.col + 0.5) * cellPx,
+      cy: boardInset + (cell.row + 0.5) * cellPx,
+    };
   })();
 
   const byCorner = seatPlayersByCorner(state.players, perspectiveColor);
@@ -792,18 +794,18 @@ export default function GameScreen() {
         <View style={[styles.boardSquare, { width: boardSize, height: boardSize }]}>
           <ImageBackground
             source={cityBoardSource ?? Images.bgHome}
-            style={StyleSheet.absoluteFill}
+            style={[StyleSheet.absoluteFill, styles.boardSurface]}
             imageStyle={styles.boardCityImage}
             resizeMode="cover"
           >
             <View style={styles.boardCityTint} />
             <BoardCanvas size={boardSize} perspectiveColor={perspectiveColor} />
           </ImageBackground>
-          <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+          <View style={[StyleSheet.absoluteFill, styles.tokenLayer]} pointerEvents="box-none">
             {allTokens.map((t) => {
               const cell = cellForPerspective(cellForToken(t), perspectiveColor);
-              const cx = (cell.col + 0.5) * cellPx;
-              const cy = (cell.row + 0.5) * cellPx;
+              const cx = boardInset + (cell.col + 0.5) * cellPx;
+              const cy = boardInset + (cell.row + 0.5) * cellPx;
               const movable = isMyTurn && state.status === 'awaiting_move' && movableTokenIds.has(t.id);
               const isMoving = moveAnim?.movingTokenId === t.id;
               const isCaptured = moveAnim?.capturedIds.has(t.id) ?? false;
@@ -828,12 +830,13 @@ export default function GameScreen() {
                 cx={pickerCenter.cx}
                 cy={pickerCenter.cy}
                 offset={tokenSize / 2}
+                boardSize={boardSize}
                 values={pickerValues}
                 onPick={onPickerSelect}
               />
             )}
           </View>
-          <View style={StyleSheet.absoluteFill} pointerEvents="none">
+          <View style={[StyleSheet.absoluteFill, styles.particleLayer]} pointerEvents="none">
             <Particles width={boardSize} height={boardSize} bursts={bursts} />
           </View>
         </View>
@@ -1645,7 +1648,7 @@ const styles = StyleSheet.create({
   },
   boardSquare: {
     position: 'relative',
-    overflow: 'hidden',
+    overflow: 'visible',
     borderRadius: 18,
     shadowColor: colors.gold,
     shadowOpacity: 0.42,
@@ -1653,12 +1656,24 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 0 },
     elevation: 18,
   },
+  boardSurface: {
+    overflow: 'hidden',
+    borderRadius: 18,
+  },
   boardCityImage: {
     opacity: 0.6,
+    borderRadius: 18,
   },
   boardCityTint: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(20,8,24,0.38)',
+  },
+  tokenLayer: {
+    zIndex: 4,
+    overflow: 'visible',
+  },
+  particleLayer: {
+    zIndex: 3,
   },
   localBarPlaceholder: { minHeight: 154 },
   localBar: {
