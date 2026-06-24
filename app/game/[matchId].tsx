@@ -753,7 +753,6 @@ export default function GameScreen() {
       : `Waiting for opponent to join the table (${roomPresenceCount}/2).`
     : makeHint(state, isMyTurn, currentPlayer);
   const timerProgress = shouldRunRollTimer ? rollTimerRemaining / ROLL_TIMEOUT_MS : null;
-  const timerSeconds = shouldRunRollTimer ? Math.ceil(rollTimerRemaining / 1000) : null;
   const localPlayer = byCorner.bottomLeft;
   const opponentPlayer = byCorner.topRight ?? byCorner.topLeft ?? byCorner.bottomRight;
   const sidePlayers = [byCorner.topLeft, byCorner.bottomRight]
@@ -765,7 +764,6 @@ export default function GameScreen() {
     canRoll: isMyTurn && state.status === 'awaiting_roll' && !state.winnerColor,
     onRoll: onHumanRoll,
     timerProgress,
-    timerSeconds,
   };
   const cityBoardSource = typeof citySlug === 'string' && citySlug ? CITY_BACKGROUNDS[citySlug] : undefined;
 
@@ -829,7 +827,7 @@ export default function GameScreen() {
                   color={t.color}
                   cx={center.cx}
                   cy={center.cy}
-                  size={tokenSize}
+                  size={center.size}
                   selectable={movable}
                   highlighted={movable}
                   hopPath={isMoving ? moveAnim?.hopPath : undefined}
@@ -843,7 +841,7 @@ export default function GameScreen() {
               <TokenDicePicker
                 cx={pickerCenter.cx}
                 cy={pickerCenter.cy}
-                offset={tokenSize / 2}
+                offset={pickerCenter.size / 2}
                 boardSize={boardSize}
                 values={pickerValues}
                 onPick={onPickerSelect}
@@ -929,7 +927,6 @@ type DiceHudProps = {
   canRoll: boolean;
   onRoll: () => void;
   timerProgress: number | null;
-  timerSeconds: number | null;
 };
 
 function TopHud({
@@ -1022,11 +1019,16 @@ function RemoteSeat({
   dice: DiceHudProps | null;
   onProfilePress: () => void;
 }) {
+  const pool = dice?.dicePool ?? [];
   return (
     <View style={styles.remoteSeat}>
       <DiceBubble dice={dice} value={lastRoll} active={active} remote />
-      <PlayerAvatar player={player} active={active} size={66} onPress={onProfilePress} />
-      <Text style={styles.remoteName} numberOfLines={1}>{player.name}</Text>
+      <PlayerAvatar player={player} active={active} size={52} onPress={onProfilePress} timerProgress={dice?.timerProgress ?? null} />
+      {pool.length > 0 ? (
+        <DicePoolRow values={pool} compact />
+      ) : (
+        <Text style={styles.remoteName} numberOfLines={1}>{player.name}</Text>
+      )}
     </View>
   );
 }
@@ -1046,7 +1048,7 @@ function MiniSeat({
 }) {
   return (
     <View style={[styles.miniSeat, style]}>
-      <PlayerAvatar player={player} active={active} size={44} onPress={onPress} />
+      <PlayerAvatar player={player} active={active} size={38} onPress={onPress} />
       <View style={styles.miniDie}>
         <Text style={styles.miniDieText}>{lastRoll ?? '-'}</Text>
       </View>
@@ -1070,12 +1072,17 @@ function LocalCommandBar({
   onProfilePress: () => void;
 }) {
   if (!player) return <View style={styles.localBarPlaceholder} />;
+  const pool = dice?.dicePool ?? [];
 
   return (
     <View style={styles.localBar}>
-      <Text style={styles.localName} numberOfLines={1}>{player.name}</Text>
+      {pool.length > 0 ? (
+        <DicePoolRow values={pool} />
+      ) : (
+        <Text style={styles.localName} numberOfLines={1}>{player.name}</Text>
+      )}
       <View style={styles.localControls}>
-        <PlayerAvatar player={player} active={active} size={72} onPress={onProfilePress} />
+        <PlayerAvatar player={player} active={active} size={58} onPress={onProfilePress} timerProgress={dice?.timerProgress ?? null} />
         <DiceBubble dice={dice} value={lastRoll} active={active} />
         <View style={styles.quickStack}>
           <Pressable disabled={!canUndo} style={[styles.quickButton, !canUndo && styles.quickButtonDisabled]}>
@@ -1112,7 +1119,6 @@ function DiceBubble({
 }) {
   const rolling = dice?.isRolling ?? false;
   const diceValue = dice?.displayRoll ?? dice?.dicePool[dice.dicePool.length - 1] ?? value;
-  const pool = dice?.dicePool ?? [];
   const shouldShow = !!dice || value !== null || active;
   if (!shouldShow) return null;
 
@@ -1130,34 +1136,31 @@ function DiceBubble({
         pressed && dice?.canRoll && !rolling && { transform: [{ scale: 0.96 }] },
       ]}
     >
-      {dice && dice.timerProgress !== null && (
-        <DiceProgressRing progress={dice.timerProgress} remote={remote} />
-      )}
       <View style={styles.dicePointer} />
-      <Dice size={remote ? 54 : 58} value={rolling ? null : diceValue} rolling={rolling} />
-      {pool.length > 0 && (
-        <View style={styles.poolBadge}>
-          <Text style={styles.poolBadgeText}>{pool.slice(0, 3).join(' ')}</Text>
-        </View>
-      )}
-      {dice && dice.timerSeconds !== null && <Text style={styles.rollTimerText}>{dice.timerSeconds}s</Text>}
+      <Dice size={remote ? 42 : 48} value={rolling ? null : diceValue} rolling={rolling} />
     </Pressable>
   );
 }
 
-function DiceProgressRing({
-  progress,
-  remote,
-}: {
-  progress: number;
-  remote: boolean;
-}) {
-  const ticks = 28;
+function DicePoolRow({ values, compact = false }: { values: number[]; compact?: boolean }) {
+  return (
+    <View style={[styles.poolDiceRow, compact && styles.poolDiceRowCompact]}>
+      {values.slice(0, 4).map((die, index) => (
+        <View key={`${die}-${index}`} style={[styles.poolDieChip, compact && styles.poolDieChipCompact]}>
+          <Dice size={compact ? 17 : 20} value={die} rolling={false} />
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function AvatarProgressRing({ progress, size }: { progress: number; size: number }) {
+  const ticks = 32;
   const clamped = Math.max(0, Math.min(1, progress));
-  const radius = remote ? 47 : 50;
+  const radius = size / 2 + 5;
 
   return (
-    <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+    <View pointerEvents="none" style={styles.avatarProgressRing}>
       {Array.from({ length: ticks }, (_, index) => {
         const active = index / ticks <= clamped;
         return (
@@ -1185,11 +1188,13 @@ function PlayerAvatar({
   active,
   size,
   onPress,
+  timerProgress = null,
 }: {
   player: Player;
   active: boolean;
   size: number;
   onPress?: () => void;
+  timerProgress?: number | null;
 }) {
   const avatar = getAvatar(player.avatarId);
   return (
@@ -1210,6 +1215,7 @@ function PlayerAvatar({
       <View style={[styles.avatarFace, { backgroundColor: avatar.bg, borderRadius: size / 2 }]}>
         <Ionicons name={avatar.icon} size={size * 0.46} color="#fff" />
       </View>
+      {timerProgress !== null && <AvatarProgressRing progress={timerProgress} size={size} />}
       <View style={[styles.playerColorRing, { backgroundColor: PLAYER_HEX[player.color] }]} />
     </Pressable>
   );
@@ -1405,7 +1411,7 @@ function buildTokenCenters(
   boardInset: number,
   cellPx: number,
   tokenSize: number,
-): Map<TokenId, { cx: number; cy: number }> {
+): Map<TokenId, { cx: number; cy: number; size: number }> {
   const grouped = new Map<string, { token: GameToken; cell: Cell }[]>();
 
   for (const token of tokens) {
@@ -1418,16 +1424,18 @@ function buildTokenCenters(
     grouped.set(key, group);
   }
 
-  const centers = new Map<TokenId, { cx: number; cy: number }>();
+  const centers = new Map<TokenId, { cx: number; cy: number; size: number }>();
   for (const group of grouped.values()) {
     const sorted = [...group].sort((a, b) => a.token.id.localeCompare(b.token.id));
     sorted.forEach(({ token, cell }, index) => {
+      const size = stackedTokenSize(tokenSize, sorted.length);
       const offset = token.location.kind === 'finished'
-        ? finishedStackOffset(token.color, perspectiveColor, index, sorted.length, tokenSize)
-        : stackOffset(index, sorted.length, tokenSize);
+        ? finishedStackOffset(token.color, perspectiveColor, index, sorted.length, size)
+        : stackOffset(index, sorted.length, size);
       centers.set(token.id, {
         cx: boardInset + (cell.col + 0.5) * cellPx + offset.dx,
         cy: boardInset + (cell.row + 0.5) * cellPx + offset.dy,
+        size,
       });
     });
   }
@@ -1455,9 +1463,16 @@ function finishedCellForColor(color: Color, perspectiveColor: Color): Cell {
   }
 }
 
+function stackedTokenSize(tokenSize: number, count: number): number {
+  if (count <= 1) return tokenSize;
+  if (count === 2) return tokenSize * 0.86;
+  if (count === 3) return tokenSize * 0.76;
+  return tokenSize * 0.68;
+}
+
 function stackOffset(index: number, count: number, tokenSize: number) {
   if (count <= 1) return { dx: 0, dy: 0 };
-  const step = tokenSize * 0.16;
+  const step = tokenSize * 0.13;
   const middle = (count - 1) / 2;
   const amount = (index - middle) * step;
   return { dx: amount, dy: -amount * 0.62 };
@@ -1609,22 +1624,22 @@ const styles = StyleSheet.create({
     letterSpacing: 1.5,
   },
   opponentLayer: {
-    minHeight: 118,
+    minHeight: 92,
     paddingHorizontal: 10,
-    paddingTop: 18,
+    paddingTop: 10,
   },
   remoteSeat: {
     position: 'absolute',
     right: 10,
-    top: 6,
+    top: 2,
     alignItems: 'flex-end',
   },
   remoteName: {
-    marginTop: 4,
-    maxWidth: 150,
+    marginTop: 3,
+    maxWidth: 126,
     color: '#fff',
     fontFamily: fontFamilies.heading,
-    fontSize: 15,
+    fontSize: 12,
     fontWeight: '400',
     textShadowColor: '#000',
     textShadowRadius: 4,
@@ -1636,22 +1651,22 @@ const styles = StyleSheet.create({
     gap: 6,
     opacity: 0.9,
   },
-  sideSeatLeft: { left: 10, top: 18 },
-  sideSeatRight: { left: 10, top: 72 },
+  sideSeatLeft: { left: 10, top: 10 },
+  sideSeatRight: { left: 10, top: 54 },
   miniDie: {
-    width: 26,
-    height: 26,
-    borderRadius: 8,
-    backgroundColor: '#E3E5EA',
-    borderWidth: 2,
-    borderColor: '#705531',
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    backgroundColor: '#F7E7A6',
+    borderWidth: 1,
+    borderColor: colors.goldDark,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  miniDieText: { color: '#1E1E24', fontFamily: fontFamilies.heading, fontWeight: '400', fontSize: 12 },
+  miniDieText: { color: '#1E1E24', fontFamily: fontFamilies.heading, fontWeight: '400', fontSize: 10 },
   avatarShell: {
-    padding: 3,
-    borderWidth: 3,
+    padding: 2,
+    borderWidth: 2,
     backgroundColor: '#281035',
     shadowColor: '#000',
     shadowOpacity: 0.32,
@@ -1669,36 +1684,36 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: 1,
     bottom: 3,
-    width: 15,
-    height: 15,
-    borderRadius: 8,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
     borderWidth: 2,
     borderColor: '#fff',
   },
   diceBubble: {
-    minWidth: 82,
-    minHeight: 78,
-    borderRadius: 15,
-    backgroundColor: '#7A4B35',
-    borderWidth: 4,
-    borderColor: '#A75A33',
+    minWidth: 70,
+    minHeight: 62,
+    borderRadius: 14,
+    backgroundColor: '#A47E1A',
+    borderWidth: 3,
+    borderColor: '#C89A2B',
     alignItems: 'center',
     justifyContent: 'center',
-    marginHorizontal: 8,
+    marginHorizontal: 0,
     shadowColor: '#000',
-    shadowOpacity: 0.38,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.28,
+    shadowRadius: 7,
+    shadowOffset: { width: 0, height: 4 },
     elevation: 10,
     overflow: 'visible',
   },
   remoteDiceBubble: {
     position: 'absolute',
-    right: 60,
-    top: 18,
-    minWidth: 76,
-    minHeight: 72,
-    backgroundColor: '#8B7928',
+    right: 68,
+    top: 10,
+    minWidth: 62,
+    minHeight: 56,
+    backgroundColor: '#A38621',
     borderColor: colors.goldDark,
   },
   diceBubbleActive: {
@@ -1716,42 +1731,49 @@ const styles = StyleSheet.create({
     borderLeftWidth: 15,
     borderTopColor: 'transparent',
     borderBottomColor: 'transparent',
-    borderLeftColor: '#A75A33',
+    borderLeftColor: '#C89A2B',
   },
-  poolBadge: {
-    position: 'absolute',
-    right: -8,
-    top: -9,
-    minWidth: 24,
+  poolDiceRow: {
+    flexDirection: 'row',
+    gap: 5,
     minHeight: 22,
-    borderRadius: 10,
-    backgroundColor: '#0E9AC5',
-    borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.75)',
+    alignItems: 'center',
+    marginBottom: 3,
+  },
+  poolDiceRowCompact: {
+    marginTop: 4,
+    marginBottom: 0,
+    gap: 3,
+  },
+  poolDieChip: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    backgroundColor: '#4B3377',
+    borderWidth: 1,
+    borderColor: '#E7D5FF',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 5,
   },
-  poolBadgeText: { color: '#fff', fontFamily: fontFamilies.heading, fontWeight: '400', fontSize: 11 },
+  poolDieChipCompact: {
+    width: 20,
+    height: 20,
+    borderRadius: 5,
+  },
+  avatarProgressRing: {
+    ...StyleSheet.absoluteFillObject,
+    overflow: 'visible',
+  },
   progressTick: {
     position: 'absolute',
     left: '50%',
     top: '50%',
     width: 3,
-    height: 8,
+    height: 7,
     marginLeft: -1.5,
-    marginTop: -4,
+    marginTop: -3.5,
     borderRadius: 2,
-    backgroundColor: colors.goldLight,
-  },
-  rollTimerText: {
-    position: 'absolute',
-    right: 5,
-    bottom: 2,
-    color: colors.goldLight,
-    fontFamily: fontFamilies.heading,
-    fontSize: 9,
-    fontWeight: '400',
+    backgroundColor: '#33F083',
   },
   boardWrap: {
     flex: 1,
@@ -1783,34 +1805,35 @@ const styles = StyleSheet.create({
   particleLayer: {
     zIndex: 3,
   },
-  localBarPlaceholder: { minHeight: 154 },
+  localBarPlaceholder: { minHeight: 118 },
   localBar: {
-    minHeight: 154,
+    minHeight: 118,
     paddingHorizontal: 10,
-    paddingTop: 8,
+    paddingTop: 2,
     paddingBottom: 4,
   },
   localName: {
     color: '#fff',
     fontFamily: fontFamilies.heading,
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '400',
-    marginBottom: 5,
+    marginBottom: 3,
     textShadowColor: '#000',
     textShadowRadius: 4,
   },
   localControls: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 14,
   },
   quickStack: {
-    gap: 5,
+    gap: 3,
     alignItems: 'center',
   },
   quickButton: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     backgroundColor: 'rgba(255,255,255,0.20)',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.12)',
@@ -1823,16 +1846,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 3,
   },
-  gemCostText: { color: colors.text, fontFamily: fontFamilies.heading, fontWeight: '400', fontSize: 13 },
+  gemCostText: { color: colors.text, fontFamily: fontFamilies.heading, fontWeight: '400', fontSize: 12 },
   chatRow: {
     flexDirection: 'row',
-    gap: 8,
-    marginTop: 8,
+    gap: 7,
+    marginTop: 5,
   },
   chatButton: {
-    minWidth: 96,
-    height: 39,
-    borderRadius: 16,
+    minWidth: 78,
+    height: 32,
+    borderRadius: 14,
     backgroundColor: 'rgba(255,255,255,0.22)',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.08)',
@@ -1843,7 +1866,7 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontFamily: fontFamilies.heading,
     fontWeight: '400',
-    fontSize: 16,
+    fontSize: 13,
   },
   modalOverlay: {
     ...StyleSheet.absoluteFillObject,

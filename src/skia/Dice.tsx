@@ -1,221 +1,161 @@
-// Dice with 6 face states and a tumble animation.
-// The face is drawn with plain Views (cheap, easy to read); the tumble uses
-// Reanimated rotate. Skia could draw this too but 6 dot-grids are trivial in RN.
+// Premium gold dice rendered with Skia. Reanimated handles the roll zoom/spin
+// while Skia paints bevels, metallic highlights, and black diamond pips.
 
 import { useEffect } from 'react';
-import { StyleSheet, View } from 'react-native';
 import Animated, {
+  Easing,
   useAnimatedStyle,
   useSharedValue,
-  withDelay,
   withRepeat,
   withSequence,
   withTiming,
 } from 'react-native-reanimated';
-
-import { colors } from '@/src/theme/colors';
+import {
+  Canvas,
+  Circle,
+  Group,
+  LinearGradient,
+  Path,
+  Rect,
+  RoundedRect,
+  Skia,
+  vec,
+} from '@shopify/react-native-skia';
 
 type Props = {
   size: number;
-  value: number | null; // 1..6, or null if not yet rolled
+  value: number | null;
   rolling: boolean;
 };
 
-const FACES: Record<number, [boolean, boolean, boolean, boolean, boolean, boolean, boolean, boolean, boolean]> = {
-  // 9 cells in a 3x3 grid. true means dot at this position.
-  1: [false, false, false, false, true, false, false, false, false],
-  2: [true, false, false, false, false, false, false, false, true],
-  3: [true, false, false, false, true, false, false, false, true],
-  4: [true, false, true, false, false, false, true, false, true],
-  5: [true, false, true, false, true, false, true, false, true],
-  6: [true, false, true, true, false, true, true, false, true],
+const DOTS: Record<number, [number, number][]> = {
+  1: [[0.5, 0.5]],
+  2: [[0.3, 0.3], [0.7, 0.7]],
+  3: [[0.3, 0.3], [0.5, 0.5], [0.7, 0.7]],
+  4: [[0.3, 0.3], [0.7, 0.3], [0.3, 0.7], [0.7, 0.7]],
+  5: [[0.3, 0.3], [0.7, 0.3], [0.5, 0.5], [0.3, 0.7], [0.7, 0.7]],
+  6: [[0.3, 0.26], [0.7, 0.26], [0.3, 0.5], [0.7, 0.5], [0.3, 0.74], [0.7, 0.74]],
 };
 
-const SPARKLES = [
-  { x: -0.08, y: 0.12, size: 0.13 },
-  { x: 0.18, y: -0.10, size: 0.09 },
-  { x: 0.66, y: -0.08, size: 0.12 },
-  { x: 0.94, y: 0.22, size: 0.08 },
-  { x: 0.84, y: 0.76, size: 0.11 },
-  { x: 0.52, y: 0.98, size: 0.08 },
-  { x: 0.12, y: 0.84, size: 0.10 },
-  { x: -0.10, y: 0.52, size: 0.07 },
+const GLITTER = [
+  [0.2, 0.18, 0.018],
+  [0.68, 0.16, 0.012],
+  [0.82, 0.34, 0.014],
+  [0.16, 0.62, 0.011],
+  [0.42, 0.78, 0.014],
+  [0.76, 0.78, 0.01],
 ];
 
 export function Dice({ size, value, rolling }: Props) {
-  const rot = useSharedValue(0);
   const scale = useSharedValue(1);
+  const rotate = useSharedValue(0);
+  const tilt = useSharedValue(0);
 
   useEffect(() => {
     if (rolling) {
-      rot.value = 0;
-      rot.value = withTiming(720, { duration: 600 });
-      scale.value = withTiming(1.15, { duration: 200 }, () => {
-        scale.value = withTiming(1, { duration: 200 });
-      });
+      scale.value = withTiming(1.42, { duration: 160, easing: Easing.out(Easing.cubic) });
+      rotate.value = withRepeat(withTiming(360, { duration: 520, easing: Easing.linear }), -1, false);
+      tilt.value = withRepeat(
+        withSequence(
+          withTiming(16, { duration: 140, easing: Easing.inOut(Easing.quad) }),
+          withTiming(-16, { duration: 140, easing: Easing.inOut(Easing.quad) }),
+        ),
+        -1,
+        true,
+      );
+      return;
     }
-  }, [rolling, rot, scale]);
 
-  const containerStyle = useAnimatedStyle(() => ({
-    transform: [{ rotate: `${rot.value}deg` }, { scale: scale.value }],
+    scale.value = withTiming(1, { duration: 260, easing: Easing.out(Easing.back(1.25)) });
+    rotate.value = withTiming(0, { duration: 260, easing: Easing.out(Easing.cubic) });
+    tilt.value = withTiming(0, { duration: 220, easing: Easing.out(Easing.cubic) });
+  }, [rolling, rotate, scale, tilt, value]);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [
+      { perspective: size * 9 },
+      { scale: scale.value },
+      { rotateZ: `${rotate.value}deg` },
+      { rotateX: `${tilt.value}deg` },
+      { rotateY: `${-tilt.value * 0.55}deg` },
+    ],
   }));
 
-  const dots = value && !rolling ? FACES[value] : null;
+  const face = rolling ? ((Math.floor(Date.now() / 120) % 6) + 1) : value;
 
   return (
-    <Animated.View
-      style={[
-        styles.face,
-        { width: size, height: size, borderRadius: size * 0.18 },
-        containerStyle,
-      ]}
-    >
-      {SPARKLES.map((sparkle, index) => (
-        <DiceSparkle
-          key={index}
-          active={rolling || value !== null}
-          index={index}
-          rolling={rolling}
-          size={size}
-          x={sparkle.x}
-          y={sparkle.y}
-          sparkleSize={sparkle.size}
-        />
-      ))}
-      {dots ? (
-        <View style={styles.grid}>
-          {dots.map((on, i) => (
-            <View key={i} style={styles.cell}>
-              {on ? (
-                <View
-                  style={[
-                    styles.dot,
-                    {
-                      width: size * 0.18,
-                      height: size * 0.18,
-                      borderRadius: (size * 0.18) / 2,
-                    },
-                  ]}
-                />
-              ) : null}
-            </View>
-          ))}
-        </View>
-      ) : (
-        <View style={styles.cell} />
-      )}
+    <Animated.View style={[{ width: size, height: size }, animatedStyle]}>
+      <Canvas style={{ width: size, height: size }} pointerEvents="none">
+        <GoldDieFace size={size} value={face} />
+      </Canvas>
     </Animated.View>
   );
 }
 
-function DiceSparkle({
-  active,
-  index,
-  rolling,
-  size,
-  x,
-  y,
-  sparkleSize,
-}: {
-  active: boolean;
-  index: number;
-  rolling: boolean;
-  size: number;
-  x: number;
-  y: number;
-  sparkleSize: number;
-}) {
-  const twinkle = useSharedValue(0);
-
-  useEffect(() => {
-    if (!active) {
-      twinkle.value = withTiming(0, { duration: 160 });
-      return;
-    }
-
-    const delay = index * (rolling ? 55 : 160);
-    const upMs = rolling ? 130 : 520;
-    const downMs = rolling ? 260 : 900;
-    twinkle.value = withDelay(
-      delay,
-      withRepeat(
-        withSequence(
-          withTiming(1, { duration: upMs }),
-          withTiming(0.15, { duration: downMs }),
-        ),
-        -1,
-        true,
-      ),
-    );
-  }, [active, index, rolling, twinkle]);
-
-  const sparkleStyle = useAnimatedStyle(() => ({
-    opacity: twinkle.value,
-    transform: [
-      { rotate: '45deg' },
-      { scale: 0.45 + twinkle.value * (rolling ? 0.95 : 0.55) },
-    ],
-  }));
-
-  const pixelSize = size * sparkleSize;
+function GoldDieFace({ size, value }: { size: number; value: number | null }) {
+  const radius = size * 0.22;
+  const faceInset = size * 0.055;
+  const pipSize = size * 0.112;
+  const dots = value ? DOTS[value] : [];
 
   return (
-    <Animated.View
-      pointerEvents="none"
-      style={[
-        styles.sparkle,
-        {
-          left: size * x,
-          top: size * y,
-          width: pixelSize,
-          height: pixelSize,
-          borderRadius: pixelSize * 0.18,
-        },
-        sparkleStyle,
-      ]}
-    />
+    <>
+      <RoundedRect x={size * 0.07} y={size * 0.1} width={size * 0.88} height={size * 0.88} r={radius} color="rgba(38, 19, 1, 0.42)" />
+      <RoundedRect x={0} y={0} width={size} height={size} r={radius} color="#D89B13">
+        <LinearGradient
+          start={vec(0, 0)}
+          end={vec(size, size)}
+          colors={['#FFF5A5', '#F1B315', '#C17404', '#FFE174']}
+          positions={[0, 0.4, 0.72, 1]}
+        />
+      </RoundedRect>
+      <RoundedRect x={faceInset} y={faceInset} width={size - faceInset * 2} height={size - faceInset * 2} r={radius * 0.72} color="rgba(255,255,255,0.16)" style="stroke" strokeWidth={size * 0.034} />
+      <Rect x={size * 0.1} y={size * 0.11} width={size * 0.8} height={size * 0.1} color="rgba(255,255,255,0.16)" />
+      <Path path={bevelPath(size)} color="rgba(78, 37, 0, 0.24)" />
+      {GLITTER.map(([x, y, r], index) => (
+        <Circle key={`glitter-${index}`} cx={x * size} cy={y * size} r={r * size} color="rgba(255,255,255,0.58)" />
+      ))}
+      {dots.map(([x, y], index) => (
+        <Group key={`dot-${index}`}>
+          <Circle cx={x * size} cy={y * size} r={pipSize * 0.82} color="rgba(84, 45, 0, 0.42)" />
+          <Path path={diamondPath(x * size, y * size, pipSize)} color="#050505" />
+          <Path path={diamondFacetPath(x * size, y * size, pipSize)} color="rgba(255,255,255,0.28)" />
+          <Path path={diamondPath(x * size, y * size, pipSize)} color="#8A5C07" style="stroke" strokeWidth={size * 0.018} />
+        </Group>
+      ))}
+    </>
   );
 }
 
-const styles = StyleSheet.create({
-  face: {
-    backgroundColor: '#F4D64C',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: '#5B2A16',
-    shadowColor: colors.gold,
-    shadowOpacity: 0.55,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 0 },
-    elevation: 6,
-    overflow: 'visible',
-  },
-  grid: {
-    flex: 1,
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    padding: 6,
-  },
-  cell: {
-    width: '33.33%',
-    height: '33.33%',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  dot: {
-    backgroundColor: '#130703',
-  },
-  sparkle: {
-    position: 'absolute',
-    backgroundColor: '#FFF7C8',
-    borderWidth: 1,
-    borderColor: colors.gold,
-    shadowColor: colors.gold,
-    shadowOpacity: 0.95,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 0 },
-    elevation: 9,
-    zIndex: 4,
-  },
-});
+function bevelPath(size: number) {
+  const path = Skia.Path.Make();
+  path.moveTo(size * 0.82, size * 0.08);
+  path.quadTo(size * 0.94, size * 0.12, size * 0.94, size * 0.28);
+  path.lineTo(size * 0.94, size * 0.78);
+  path.quadTo(size * 0.92, size * 0.92, size * 0.78, size * 0.94);
+  path.lineTo(size * 0.93, size * 0.58);
+  path.lineTo(size * 0.93, size * 0.22);
+  path.quadTo(size * 0.91, size * 0.1, size * 0.82, size * 0.08);
+  path.close();
+  return path;
+}
+
+function diamondPath(cx: number, cy: number, r: number) {
+  const path = Skia.Path.Make();
+  path.moveTo(cx, cy - r);
+  path.lineTo(cx + r, cy);
+  path.lineTo(cx, cy + r);
+  path.lineTo(cx - r, cy);
+  path.close();
+  return path;
+}
+
+function diamondFacetPath(cx: number, cy: number, r: number) {
+  const path = Skia.Path.Make();
+  path.moveTo(cx - r * 0.48, cy - r * 0.08);
+  path.lineTo(cx, cy - r * 0.62);
+  path.lineTo(cx + r * 0.36, cy - r * 0.1);
+  path.lineTo(cx, cy + r * 0.12);
+  path.close();
+  return path;
+}
