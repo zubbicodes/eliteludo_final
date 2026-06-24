@@ -6,14 +6,15 @@ import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-nati
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AD_REWARD_COINS, IAP_COIN_PACK_AMOUNT, SHOP_ITEMS } from '@/src/constants/economy';
-import { purchaseCoinPack } from '@/src/services/iap';
 import { showRewardedAd } from '@/src/services/ads';
+import { purchaseCoinPack } from '@/src/services/iap';
 import { useProfileStore } from '@/src/stores/profile';
 import { useShopStore } from '@/src/stores/shop';
 import { useWalletStore } from '@/src/stores/wallet';
 import { colors } from '@/src/theme/colors';
 import { fontFamilies } from '@/src/theme/typography';
 import { haptics } from '@/src/utils/haptics';
+import { sound } from '@/src/utils/sound';
 
 export default function ShopScreen() {
   const router = useRouter();
@@ -40,22 +41,30 @@ export default function ShopScreen() {
   const onRewardAd = async () => {
     if (rewarding) return;
     haptics.tap();
+    sound.play('tap');
     setRewarding(true);
     const result = await showRewardedAd('shop_reward');
     await refreshWallet();
     setRewarding(false);
-    if (result.success) haptics.success();
+    if (result.success) {
+      haptics.success();
+      sound.play('coin');
+    }
     else Alert.alert('Ad not completed', 'Coins are granted after the rewarded ad finishes.');
   };
 
   const onCoinPack = async () => {
     if (buyingPack) return;
     haptics.tap();
+    sound.play('tap');
     setBuyingPack(true);
     try {
       const result = await purchaseCoinPack();
       await refreshWallet();
-      if (result.success) haptics.success();
+      if (result.success) {
+        haptics.success();
+        sound.play('coin');
+      }
       else Alert.alert('Purchase pending', result.reason ?? 'The coin pack was not granted yet.');
     } catch {
       Alert.alert('Purchase unavailable', 'Use the rewarded ad or shop coins while IAP is unavailable.');
@@ -67,7 +76,10 @@ export default function ShopScreen() {
   return (
     <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.iconBtn}>
+        <Pressable onPress={() => {
+          sound.play('tap');
+          router.back();
+        }} style={styles.iconBtn}>
           <Ionicons name="chevron-back" size={22} color={colors.gold} />
         </Pressable>
         <Text style={styles.title}>Shop</Text>
@@ -114,6 +126,7 @@ export default function ShopScreen() {
                 disabled={owned || loading}
                 onPress={async () => {
                   haptics.tap();
+                  sound.play('tap');
                   const result = await purchase(item.id);
                   if (result.success) haptics.success();
                   else Alert.alert('Purchase failed', result.reason ?? 'Check your balance and try again.');

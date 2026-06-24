@@ -26,11 +26,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { TokenDicePicker } from '@/src/components/TokenDicePicker';
 import { getAvatar } from '@/src/constants/profile';
 import { botThinkDelay } from '@/src/game/bots';
-import { cellForToken } from '@/src/game/board';
-import { cellForPerspective, visualCornerForColor } from '@/src/game/perspective';
+import { cellForToken, type Cell } from '@/src/game/board';
+import { cellForPerspective, visualCornerForColor, type VisualCorner } from '@/src/game/perspective';
 import { pathCellsForMove } from '@/src/game/rules';
 import { assignRuntimeColors, isOppositePair, oppositeColor } from '@/src/game/seating';
-import type { Color, MatchPlayer, Player, TokenId } from '@/src/game/types';
+import type { Color, MatchPlayer, Player, Token as GameToken, TokenId } from '@/src/game/types';
 import { Images } from '@/src/assets';
 import { supabase } from '@/src/supabase/client';
 import { getSupabaseErrorMessage } from '@/src/supabase/errors';
@@ -614,6 +614,19 @@ export default function GameScreen() {
     return () => clearTimeout(t);
   }, [state.lastMove, state.players, boardInset, cellPx, perspectiveColor]);
 
+  // ── Effect: token finish -> sound. ──
+  useEffect(() => {
+    const move = state.lastMove;
+    if (!move) return;
+    if (move.to.kind === 'finished') {
+      const arriveMs = Math.max(1, hopsForMove(move.from, move.dieValue)) * HOP_MS;
+      const t = setTimeout(() => {
+        sound.play('finish');
+      }, arriveMs);
+      return () => clearTimeout(t);
+    }
+  }, [state.lastMove]);
+
   // ── Effect: prune stale bursts. ──
   useEffect(() => {
     if (bursts.length === 0) return;
@@ -689,6 +702,11 @@ export default function GameScreen() {
     [state.players],
   );
 
+  const tokenCenters = useMemo(
+    () => buildTokenCenters(allTokens, perspectiveColor, boardInset, cellPx, tokenSize),
+    [allTokens, perspectiveColor, boardInset, cellPx, tokenSize],
+  );
+
   const movableTokenIds = useMemo(
     () => new Set(validMoves.map((m) => m.tokenId)),
     [validMoves],
@@ -724,11 +742,7 @@ export default function GameScreen() {
     if (!pickerForToken) return null;
     const tok = allTokens.find((t) => t.id === pickerForToken);
     if (!tok) return null;
-    const cell = cellForPerspective(cellForToken(tok), perspectiveColor);
-    return {
-      cx: boardInset + (cell.col + 0.5) * cellPx,
-      cy: boardInset + (cell.row + 0.5) * cellPx,
-    };
+    return tokenCenters.get(tok.id) ?? null;
   })();
 
   const byCorner = seatPlayersByCorner(state.players, perspectiveColor);
@@ -804,9 +818,8 @@ export default function GameScreen() {
           </ImageBackground>
           <View style={[StyleSheet.absoluteFill, styles.tokenLayer]} pointerEvents="box-none">
             {allTokens.map((t) => {
-              const cell = cellForPerspective(cellForToken(t), perspectiveColor);
-              const cx = boardInset + (cell.col + 0.5) * cellPx;
-              const cy = boardInset + (cell.row + 0.5) * cellPx;
+              const center = tokenCenters.get(t.id);
+              if (!center) return null;
               const movable = isMyTurn && state.status === 'awaiting_move' && movableTokenIds.has(t.id);
               const isMoving = moveAnim?.movingTokenId === t.id;
               const isCaptured = moveAnim?.capturedIds.has(t.id) ?? false;
@@ -814,8 +827,8 @@ export default function GameScreen() {
                 <TokenView
                   key={t.id}
                   color={t.color}
-                  cx={cx}
-                  cy={cy}
+                  cx={center.cx}
+                  cy={center.cy}
                   size={tokenSize}
                   selectable={movable}
                   highlighted={movable}
@@ -1386,6 +1399,105 @@ function makeHint(
   return ' ';
 }
 
+function buildTokenCenters(
+  tokens: GameToken[],
+  perspectiveColor: Color,
+  boardInset: number,
+  cellPx: number,
+  tokenSize: number,
+): Map<TokenId, { cx: number; cy: number }> {
+  const grouped = new Map<string, { token: GameToken; cell: Cell }[]>();
+
+  for (const token of tokens) {
+    const cell = visualCellForToken(token, perspectiveColor);
+    const key = token.location.kind === 'finished'
+      ? `finished:${token.color}`
+      : `${cell.col.toFixed(2)}:${cell.row.toFixed(2)}`;
+    const group = grouped.get(key) ?? [];
+    group.push({ token, cell });
+    grouped.set(key, group);
+  }
+
+  const centers = new Map<TokenId, { cx: number; cy: number }>();
+  for (const group of grouped.values()) {
+    const sorted = [...group].sort((a, b) => a.token.id.localeCompare(b.token.id));
+    sorted.forEach(({ token, cell }, index) => {
+      const offset = token.location.kind === 'finished'
+        ? finishedStackOffset(token.color, perspectiveColor, index, sorted.length, tokenSize)
+        : stackOffset(index, sorted.length, tokenSize);
+      centers.set(token.id, {
+        cx: boardInset + (cell.col + 0.5) * cellPx + offset.dx,
+        cy: boardInset + (cell.row + 0.5) * cellPx + offset.dy,
+      });
+    });
+  }
+
+  return centers;
+}
+
+function visualCellForToken(token: GameToken, perspectiveColor: Color): Cell {
+  if (token.location.kind === 'finished') {
+    return finishedCellForColor(token.color, perspectiveColor);
+  }
+  return cellForPerspective(cellForToken(token), perspectiveColor);
+}
+
+function finishedCellForColor(color: Color, perspectiveColor: Color): Cell {
+  switch (sideForVisualCorner(visualCornerForColor(color, perspectiveColor))) {
+    case 'top':
+      return { col: 7, row: 6.34 };
+    case 'right':
+      return { col: 7.66, row: 7 };
+    case 'bottom':
+      return { col: 7, row: 7.66 };
+    case 'left':
+      return { col: 6.34, row: 7 };
+  }
+}
+
+function stackOffset(index: number, count: number, tokenSize: number) {
+  if (count <= 1) return { dx: 0, dy: 0 };
+  const step = tokenSize * 0.16;
+  const middle = (count - 1) / 2;
+  const amount = (index - middle) * step;
+  return { dx: amount, dy: -amount * 0.62 };
+}
+
+function finishedStackOffset(
+  color: Color,
+  perspectiveColor: Color,
+  index: number,
+  count: number,
+  tokenSize: number,
+) {
+  if (count <= 1) return { dx: 0, dy: 0 };
+  const base = stackOffset(index, count, tokenSize);
+  const nudge = (index - (count - 1) / 2) * tokenSize * 0.1;
+  switch (sideForVisualCorner(visualCornerForColor(color, perspectiveColor))) {
+    case 'top':
+      return { dx: base.dx, dy: nudge };
+    case 'right':
+      return { dx: -nudge, dy: base.dy };
+    case 'bottom':
+      return { dx: base.dx, dy: -nudge };
+    case 'left':
+      return { dx: nudge, dy: base.dy };
+  }
+}
+
+function sideForVisualCorner(corner: VisualCorner): 'top' | 'right' | 'bottom' | 'left' {
+  switch (corner) {
+    case 'topLeft':
+      return 'left';
+    case 'topRight':
+      return 'top';
+    case 'bottomRight':
+      return 'right';
+    case 'bottomLeft':
+      return 'bottom';
+  }
+}
+
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#050201' },
   tableOverlay: {
@@ -1650,24 +1762,19 @@ const styles = StyleSheet.create({
   boardSquare: {
     position: 'relative',
     overflow: 'visible',
-    borderRadius: 18,
-    shadowColor: colors.gold,
-    shadowOpacity: 0.42,
-    shadowRadius: 24,
-    shadowOffset: { width: 0, height: 0 },
-    elevation: 18,
+    borderRadius: 12,
   },
   boardSurface: {
     overflow: 'hidden',
-    borderRadius: 18,
+    borderRadius: 12,
   },
   boardCityImage: {
-    opacity: 0.6,
-    borderRadius: 18,
+    opacity: 0,
+    borderRadius: 12,
   },
   boardCityTint: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(20,8,24,0.38)',
+    backgroundColor: 'transparent',
   },
   tokenLayer: {
     zIndex: 4,

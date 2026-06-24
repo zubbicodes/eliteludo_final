@@ -16,13 +16,13 @@ type SoundCue =
 const soundAssets: Partial<Record<SoundCue, any>> = {
   // Uncomment these once you add the audio files to assets/audio/
    tap: require('@/assets/audio/tap.m4a'),
-  // roll: require('@/assets/audio/roll.mp3'),
-  // capture: require('@/assets/audio/capture.mp3'),
-  // finish: require('@/assets/audio/finish.mp3'),
-  // coin: require('@/assets/audio/coin.mp3'),
-  // gem: require('@/assets/audio/gem.mp3'),
+   roll: require('@/assets/audio/dice_roll.mp3'),
+   capture: require('@/assets/audio/capture.mp3'),
+   finish: require('@/assets/audio/token_move.mp3'),
+   coin: require('@/assets/audio/coin.mp3'),
+   gem: require('@/assets/audio/gem.mp3'),
   // victory: require('@/assets/audio/victory.mp3'),
-  // defeat: require('@/assets/audio/defeat.mp3'),
+   defeat: require('@/assets/audio/defeat.mp3'),
 };
 
 // Cache loaded sounds

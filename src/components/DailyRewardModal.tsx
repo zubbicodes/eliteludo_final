@@ -1,11 +1,12 @@
-import { Modal, Pressable, StyleSheet, Text, View, Image } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import Animated, { FadeIn, ZoomIn } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
+import { Image, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import Animated, { FadeIn, ZoomIn } from 'react-native-reanimated';
 
-import { DAILY_REWARDS } from '@/src/stores/wallet';
 import { Images } from '@/src/assets';
+import { DAILY_REWARDS } from '@/src/stores/wallet';
 import { colors } from '@/src/theme/colors';
+import { sound } from '@/src/utils/sound';
 
 type Props = {
   visible: boolean;
@@ -17,10 +18,21 @@ type Props = {
 export function DailyRewardModal({ visible, pendingDay, onClaim, onClose }: Props) {
   const todayReward = DAILY_REWARDS[Math.max(0, pendingDay - 1)];
 
+  const handleClaim = () => {
+    sound.play('tap');
+    sound.play('coin');
+    onClaim();
+  };
+
+  const handleClose = () => {
+    sound.play('tap');
+    onClose();
+  };
+
   return (
-    <Modal visible={visible} transparent animationType="none" statusBarTranslucent onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType="none" statusBarTranslucent onRequestClose={handleClose}>
       <Animated.View entering={FadeIn.duration(220)} style={styles.backdrop}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+        <Pressable style={StyleSheet.absoluteFill} onPress={handleClose} />
 
         <Animated.View entering={ZoomIn.delay(80).duration(300)} style={styles.container}>
           {/* Gift box header — sits above the card */}
@@ -72,7 +84,7 @@ export function DailyRewardModal({ visible, pendingDay, onClaim, onClose }: Prop
 
             {/* Collect button */}
             <Pressable
-              onPress={onClaim}
+              onPress={handleClaim}
               style={({ pressed }) => [styles.collectOuter, pressed && { opacity: 0.85 }]}
             >
               <LinearGradient
@@ -86,7 +98,7 @@ export function DailyRewardModal({ visible, pendingDay, onClaim, onClose }: Prop
               </LinearGradient>
             </Pressable>
 
-            <Pressable onPress={onClose} hitSlop={12} style={{ marginTop: 8 }}>
+            <Pressable onPress={handleClose} hitSlop={12} style={{ marginTop: 8 }}>
               <Text style={styles.skipText}>Skip</Text>
             </Pressable>
           </LinearGradient>
