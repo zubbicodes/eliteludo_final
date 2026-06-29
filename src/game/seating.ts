@@ -6,6 +6,8 @@ const OPPOSITE_PAIRS: readonly (readonly [Color, Color])[] = [
   ['green', 'blue'],
 ];
 
+const BOARD_TURN_ORDER: readonly Color[] = ['blue', 'red', 'green', 'yellow'];
+
 export function oppositeColor(color: Color): Color {
   switch (color) {
     case 'red':
@@ -28,11 +30,24 @@ export function assignRuntimeColors(
     return shuffle([...pair], rng);
   }
 
-  return shuffle([...COLORS], rng).slice(0, playerCount);
+  const selected = shuffle([...COLORS], rng).slice(0, playerCount);
+  return orderColorsByBoardTurn(selected, selected[0]);
 }
 
 export function isOppositePair(a: Color, b: Color): boolean {
   return oppositeColor(a) === b;
+}
+
+export function orderColorsByBoardTurn(colors: Color[], anchorColor: Color): Color[] {
+  return [...colors].sort(
+    (a, b) => boardTurnDistance(anchorColor, a) - boardTurnDistance(anchorColor, b),
+  );
+}
+
+function boardTurnDistance(anchorColor: Color, color: Color): number {
+  const anchorIndex = BOARD_TURN_ORDER.indexOf(anchorColor);
+  const colorIndex = BOARD_TURN_ORDER.indexOf(color);
+  return (colorIndex - anchorIndex + BOARD_TURN_ORDER.length) % BOARD_TURN_ORDER.length;
 }
 
 function shuffle<T>(items: T[], rng: () => number): T[] {

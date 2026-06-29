@@ -14,6 +14,7 @@ type Player = {
 
 const COLORS: Color[] = ["red", "green", "yellow", "blue"];
 const OPPOSITE_PAIRS: [Color, Color][] = [["red", "yellow"], ["green", "blue"]];
+const BOARD_TURN_ORDER: Color[] = ["blue", "red", "green", "yellow"];
 const FEMALE_BOT_NAMES = [
   "Aisha",
   "Maya",
@@ -76,7 +77,20 @@ function assignRuntimeColors(playerCount: 2 | 4): Color[] {
   if (playerCount === 2) {
     return shuffle([...OPPOSITE_PAIRS[Math.floor(Math.random() * OPPOSITE_PAIRS.length)]]);
   }
-  return shuffle([...COLORS]);
+  const selected = shuffle([...COLORS]).slice(0, playerCount);
+  return orderColorsByBoardTurn(selected, selected[0]);
+}
+
+function orderColorsByBoardTurn(colors: Color[], anchorColor: Color): Color[] {
+  return [...colors].sort(
+    (a, b) => boardTurnDistance(anchorColor, a) - boardTurnDistance(anchorColor, b),
+  );
+}
+
+function boardTurnDistance(anchorColor: Color, color: Color): number {
+  const anchorIndex = BOARD_TURN_ORDER.indexOf(anchorColor);
+  const colorIndex = BOARD_TURN_ORDER.indexOf(color);
+  return (colorIndex - anchorIndex + BOARD_TURN_ORDER.length) % BOARD_TURN_ORDER.length;
 }
 
 function shuffle<T>(items: T[]): T[] {

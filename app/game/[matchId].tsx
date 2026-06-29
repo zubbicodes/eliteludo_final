@@ -19,7 +19,6 @@ import {
   useWindowDimensions,
   View,
   type ImageSourcePropType,
-  type ViewStyle,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -61,7 +60,7 @@ import { useProfileStore } from '@/src/stores/profile';
 import type { Profile } from '@/src/stores/profile';
 import { chooseMove, useGameStore } from '@/src/stores/game';
 import { colors } from '@/src/theme/colors';
-import { fontFamilies, spacing, typography } from '@/src/theme/typography';
+import { fontFamilies, spacing } from '@/src/theme/typography';
 
 const PLAYER_HEX: Record<Color, string> = {
   red: colors.red,
@@ -128,7 +127,6 @@ export default function GameScreen() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [requiresRoomPresence, setRequiresRoomPresence] = useState(false);
   const [roomReady, setRoomReady] = useState(true);
-  const [roomPresence, setRoomPresence] = useState<MatchPresence[]>([]);
 
   const profile = useProfileStore((s) => s.profile);
   const hydrateProfile = useProfileStore((s) => s.hydrate);
@@ -166,7 +164,6 @@ export default function GameScreen() {
     opponentForfeitTimerRef.current = null;
     setRequiresRoomPresence(false);
     setRoomReady(true);
-    setRoomPresence([]);
     setBotDriverUserId(null);
     setLocalUserId(null);
   }, [matchId, gameMode]);
@@ -209,8 +206,6 @@ export default function GameScreen() {
   }, []);
 
   const handleRoomPresence = useCallback((presence: MatchPresence[]) => {
-    setRoomPresence(presence);
-
     const localUserId = localUserIdRef.current;
     const humanPlayers = matchPlayersRef.current.filter(
       (p) => !p.is_bot && !p.user_id.startsWith('bot-'),
@@ -327,7 +322,6 @@ export default function GameScreen() {
         },
         onPresence: handleRoomPresence,
       } : undefined);
-      if (!shouldRequirePresence) setRoomPresence([]);
     };
 
     init();
@@ -746,17 +740,13 @@ export default function GameScreen() {
   })();
 
   const byCorner = seatPlayersByCorner(state.players, perspectiveColor);
-  const roomPresenceCount = roomPresence.length;
-  const hint = requiresRoomPresence && !roomReady && !state.winnerColor
-    ? opponentWasPresentRef.current
-      ? 'Opponent disconnected - waiting to reconnect...'
-      : `Waiting for opponent to join the table (${roomPresenceCount}/2).`
-    : makeHint(state, isMyTurn, currentPlayer);
   const timerProgress = shouldRunRollTimer ? rollTimerRemaining / ROLL_TIMEOUT_MS : null;
   const localPlayer = byCorner.bottomLeft;
-  const opponentPlayer = byCorner.topRight ?? byCorner.topLeft ?? byCorner.bottomRight;
-  const sidePlayers = [byCorner.topLeft, byCorner.bottomRight]
-    .filter((p): p is Player => !!p && p.color !== localPlayer?.color && p.color !== opponentPlayer?.color);
+  const cornerPlayers = (['topLeft', 'topRight', 'bottomRight'] as const)
+    .map((corner) => ({ corner, player: byCorner[corner] }))
+    .filter((seat): seat is { corner: Exclude<VisualCorner, 'bottomLeft'>; player: Player } =>
+      !!seat.player && seat.player.color !== localPlayer?.color,
+    );
   const activeDiceProps = {
     dicePool: state.dicePool,
     displayRoll: state.lastRollByColor[currentPlayer.color] ?? null,
@@ -781,88 +771,83 @@ export default function GameScreen() {
         onExit={onExitPress}
       />
 
-      <View style={styles.opponentLayer} pointerEvents="box-none">
-        {sidePlayers.map((player, index) => (
-          <MiniSeat
-            key={player.color}
-            player={player}
-            active={currentPlayer.color === player.color}
-            lastRoll={state.lastRollByColor[player.color] ?? null}
-            style={index === 0 ? styles.sideSeatLeft : styles.sideSeatRight}
-            onPress={() => setStatsPlayer(player)}
-          />
-        ))}
-        {opponentPlayer && (
-          <RemoteSeat
-            player={opponentPlayer}
-            active={currentPlayer.color === opponentPlayer.color}
-            lastRoll={state.lastRollByColor[opponentPlayer.color] ?? null}
-            dice={currentPlayer.color === opponentPlayer.color ? activeDiceProps : null}
-            onProfilePress={() => setStatsPlayer(opponentPlayer)}
-          />
-        )}
-      </View>
-
-      <View style={styles.boardWrap}>
-        <View style={[styles.boardSquare, { width: boardSize, height: boardSize }]}>
-          <ImageBackground
-            source={cityBoardSource ?? Images.bgHome}
-            style={[StyleSheet.absoluteFill, styles.boardSurface]}
-            imageStyle={styles.boardCityImage}
-            resizeMode="cover"
-          >
-            <View style={styles.boardCityTint} />
-            <BoardCanvas size={boardSize} perspectiveColor={perspectiveColor} />
-          </ImageBackground>
-          <View style={[StyleSheet.absoluteFill, styles.tokenLayer]} pointerEvents="box-none">
-            {allTokens.map((t) => {
-              const center = tokenCenters.get(t.id);
-              if (!center) return null;
-              const movable = isMyTurn && state.status === 'awaiting_move' && movableTokenIds.has(t.id);
-              const isMoving = moveAnim?.movingTokenId === t.id;
-              const isCaptured = moveAnim?.capturedIds.has(t.id) ?? false;
-              return (
-                <TokenView
-                  key={t.id}
-                  color={t.color}
-                  cx={center.cx}
-                  cy={center.cy}
-                  size={center.size}
-                  selectable={movable}
-                  highlighted={movable}
-                  hopPath={isMoving ? moveAnim?.hopPath : undefined}
-                  hopMs={HOP_MS}
-                  delayMs={isCaptured ? moveAnim?.captureDelayMs ?? 0 : 0}
-                  onPress={() => onTokenTap(t.id)}
-                />
-              );
-            })}
-            {pickerForToken && pickerCenter && pickerValues.length > 0 && (
-              <TokenDicePicker
-                cx={pickerCenter.cx}
-                cy={pickerCenter.cy}
-                offset={pickerCenter.size / 2}
-                boardSize={boardSize}
-                values={pickerValues}
-                onPick={onPickerSelect}
+      <View style={styles.playArea} pointerEvents="box-none">
+        <View style={[styles.boardAnchor, { width: boardSize, height: boardSize }]} pointerEvents="box-none">
+          <View style={styles.opponentLayer} pointerEvents="box-none">
+            {cornerPlayers.map(({ corner, player }) => (
+              <CornerSeat
+                key={player.color}
+                corner={corner}
+                player={player}
+                active={currentPlayer.color === player.color}
+                lastRoll={state.lastRollByColor[player.color] ?? null}
+                dice={currentPlayer.color === player.color ? activeDiceProps : null}
+                onProfilePress={() => setStatsPlayer(player)}
               />
-            )}
+            ))}
           </View>
-          <View style={[StyleSheet.absoluteFill, styles.particleLayer]} pointerEvents="none">
-            <Particles width={boardSize} height={boardSize} bursts={bursts} />
+
+          <View style={[styles.boardWrap, { width: boardSize, height: boardSize }]}>
+            <View style={[styles.boardSquare, { width: boardSize, height: boardSize }]}>
+              <ImageBackground
+                source={cityBoardSource ?? Images.bgHome}
+                style={[StyleSheet.absoluteFill, styles.boardSurface]}
+                imageStyle={styles.boardCityImage}
+                resizeMode="cover"
+              >
+                <View style={styles.boardCityTint} />
+                <BoardCanvas size={boardSize} perspectiveColor={perspectiveColor} />
+              </ImageBackground>
+              <View style={[StyleSheet.absoluteFill, styles.tokenLayer]} pointerEvents="box-none">
+                {allTokens.map((t) => {
+                  const center = tokenCenters.get(t.id);
+                  if (!center) return null;
+                  const movable = isMyTurn && state.status === 'awaiting_move' && movableTokenIds.has(t.id);
+                  const isMoving = moveAnim?.movingTokenId === t.id;
+                  const isCaptured = moveAnim?.capturedIds.has(t.id) ?? false;
+                  return (
+                    <TokenView
+                      key={t.id}
+                      color={t.color}
+                      cx={center.cx}
+                      cy={center.cy}
+                      size={center.size}
+                      selectable={movable}
+                      highlighted={movable}
+                      hopPath={isMoving ? moveAnim?.hopPath : undefined}
+                      hopMs={HOP_MS}
+                      delayMs={isCaptured ? moveAnim?.captureDelayMs ?? 0 : 0}
+                      onPress={() => onTokenTap(t.id)}
+                    />
+                  );
+                })}
+                {pickerForToken && pickerCenter && pickerValues.length > 0 && (
+                  <TokenDicePicker
+                    cx={pickerCenter.cx}
+                    cy={pickerCenter.cy}
+                    offset={pickerCenter.size / 2}
+                    boardSize={boardSize}
+                    values={pickerValues}
+                    onPick={onPickerSelect}
+                  />
+                )}
+              </View>
+              <View style={[StyleSheet.absoluteFill, styles.particleLayer]} pointerEvents="none">
+                <Particles width={boardSize} height={boardSize} bursts={bursts} />
+              </View>
+            </View>
           </View>
+
+          <LocalCommandBar
+            player={localPlayer}
+            active={!!localPlayer && currentPlayer.color === localPlayer.color}
+            lastRoll={localPlayer ? state.lastRollByColor[localPlayer.color] ?? null : null}
+            dice={localPlayer && currentPlayer.color === localPlayer.color ? activeDiceProps : null}
+            canUndo={state.status === 'awaiting_move' && isMyTurn}
+            onProfilePress={() => setStatsPlayer(localPlayer ?? null)}
+          />
         </View>
       </View>
-
-      <LocalCommandBar
-        player={localPlayer}
-        active={!!localPlayer && currentPlayer.color === localPlayer.color}
-        lastRoll={localPlayer ? state.lastRollByColor[localPlayer.color] ?? null : null}
-        dice={localPlayer && currentPlayer.color === localPlayer.color ? activeDiceProps : null}
-        canUndo={state.status === 'awaiting_move' && isMyTurn}
-        onProfilePress={() => setStatsPlayer(localPlayer ?? null)}
-      />
-      <Text style={styles.hint}>{hint}</Text>
       {statsPlayer && (
         <PlayerStatsModal
           player={statsPlayer}
@@ -1006,13 +991,15 @@ function ResourcePill({
   );
 }
 
-function RemoteSeat({
+function CornerSeat({
+  corner,
   player,
   active,
   lastRoll,
   dice,
   onProfilePress,
 }: {
+  corner: Exclude<VisualCorner, 'bottomLeft'>;
   player: Player;
   active: boolean;
   lastRoll: number | null;
@@ -1020,40 +1007,29 @@ function RemoteSeat({
   onProfilePress: () => void;
 }) {
   const pool = dice?.dicePool ?? [];
+  const align = corner === 'topLeft' ? 'left' : 'right';
   return (
-    <View style={styles.remoteSeat}>
-      <DiceBubble dice={dice} value={lastRoll} active={active} remote />
+    <View style={[styles.cornerSeat, cornerSeatStyle(corner), align === 'left' && styles.cornerSeatLeft]}>
+      <DiceBubble dice={dice} value={lastRoll} active={active} remote align={align} />
       <PlayerAvatar player={player} active={active} size={52} onPress={onProfilePress} timerProgress={dice?.timerProgress ?? null} />
       {pool.length > 0 ? (
         <DicePoolRow values={pool} compact />
       ) : (
-        <Text style={styles.remoteName} numberOfLines={1}>{player.name}</Text>
+        <Text style={[styles.remoteName, align === 'left' && styles.remoteNameLeft]} numberOfLines={1}>{player.name}</Text>
       )}
     </View>
   );
 }
 
-function MiniSeat({
-  player,
-  active,
-  lastRoll,
-  style,
-  onPress,
-}: {
-  player: Player;
-  active: boolean;
-  lastRoll: number | null;
-  style: ViewStyle;
-  onPress: () => void;
-}) {
-  return (
-    <View style={[styles.miniSeat, style]}>
-      <PlayerAvatar player={player} active={active} size={38} onPress={onPress} />
-      <View style={styles.miniDie}>
-        <Text style={styles.miniDieText}>{lastRoll ?? '-'}</Text>
-      </View>
-    </View>
-  );
+function cornerSeatStyle(corner: Exclude<VisualCorner, 'bottomLeft'>) {
+  switch (corner) {
+    case 'topLeft':
+      return styles.cornerSeatTopLeft;
+    case 'topRight':
+      return styles.cornerSeatTopRight;
+    case 'bottomRight':
+      return styles.cornerSeatBottomRight;
+  }
 }
 
 function LocalCommandBar({
@@ -1111,11 +1087,13 @@ function DiceBubble({
   value,
   active,
   remote = false,
+  align = 'right',
 }: {
   dice: DiceHudProps | null;
   value: number | null;
   active: boolean;
   remote?: boolean;
+  align?: 'left' | 'right';
 }) {
   const rolling = dice?.isRolling ?? false;
   const diceValue = dice?.displayRoll ?? dice?.dicePool[dice.dicePool.length - 1] ?? value;
@@ -1131,13 +1109,13 @@ function DiceBubble({
       }}
       style={({ pressed }) => [
         styles.diceBubble,
-        remote && styles.remoteDiceBubble,
+        remote && (align === 'left' ? styles.remoteDiceBubbleLeft : styles.remoteDiceBubble),
         active && styles.diceBubbleActive,
         pressed && dice?.canRoll && !rolling && { transform: [{ scale: 0.96 }] },
       ]}
     >
-      <View style={styles.dicePointer} />
-      <Dice size={remote ? 42 : 48} value={rolling ? null : diceValue} rolling={rolling} />
+      <View style={[styles.dicePointer, align === 'left' && styles.dicePointerLeft]} />
+      <Dice size={remote ? 36 : 40} value={rolling ? null : diceValue} rolling={rolling} />
     </Pressable>
   );
 }
@@ -1378,33 +1356,6 @@ function remapLastRolls(
   return next;
 }
 
-function makeHint(
-  state: ReturnType<typeof useGameStore.getState>['state'],
-  isMyTurn: boolean,
-  currentPlayer: Player | undefined,
-): string {
-  if (state.winnerColor) return '';
-  if (!currentPlayer) return '';
-  if (!isMyTurn) {
-    if (state.status === 'awaiting_roll') return `${currentPlayer.name} is about to roll...`;
-    if (state.status === 'rolling') return `${currentPlayer.name} is rolling...`;
-    if (state.status === 'awaiting_move') return `${currentPlayer.name} is choosing a move...`;
-    return ' ';
-  }
-  if (state.status === 'awaiting_roll') {
-    return state.dicePool.length > 0
-      ? 'Rolled a six - roll again!'
-      : 'Tap ROLL to start your turn.';
-  }
-  if (state.status === 'rolling') return 'Rolling...';
-  if (state.status === 'awaiting_move') {
-    return state.dicePool.length > 1
-      ? 'Tap a token, then pick which die to use.'
-      : 'Tap a highlighted token to move.';
-  }
-  return ' ';
-}
-
 function buildTokenCenters(
   tokens: GameToken[],
   perspectiveColor: Color,
@@ -1623,19 +1574,51 @@ const styles = StyleSheet.create({
     fontWeight: '400',
     letterSpacing: 1.5,
   },
-  opponentLayer: {
-    minHeight: 92,
+  playArea: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
     paddingHorizontal: 10,
-    paddingTop: 10,
   },
-  remoteSeat: {
+  boardAnchor: {
+    position: 'relative',
+    overflow: 'visible',
+  },
+  opponentLayer: {
     position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    zIndex: 8,
+  },
+  cornerSeat: {
+    position: 'absolute',
+    width: 136,
     right: 10,
-    top: 2,
+    top: -92,
     alignItems: 'flex-end',
   },
+  cornerSeatLeft: {
+    alignItems: 'flex-start',
+  },
+  cornerSeatTopLeft: {
+    left: 10,
+    right: undefined,
+    top: -92,
+  },
+  cornerSeatTopRight: {
+    right: 10,
+    top: -92,
+  },
+  cornerSeatBottomRight: {
+    right: 10,
+    top: '100%',
+    marginTop: 8,
+  },
   remoteName: {
-    marginTop: 3,
+    height: 18,
+    marginTop: 8,
     maxWidth: 126,
     color: '#fff',
     fontFamily: fontFamilies.heading,
@@ -1644,26 +1627,9 @@ const styles = StyleSheet.create({
     textShadowColor: '#000',
     textShadowRadius: 4,
   },
-  miniSeat: {
-    position: 'absolute',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    opacity: 0.9,
+  remoteNameLeft: {
+    textAlign: 'left',
   },
-  sideSeatLeft: { left: 10, top: 10 },
-  sideSeatRight: { left: 10, top: 54 },
-  miniDie: {
-    width: 22,
-    height: 22,
-    borderRadius: 6,
-    backgroundColor: '#F7E7A6',
-    borderWidth: 1,
-    borderColor: colors.goldDark,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  miniDieText: { color: '#1E1E24', fontFamily: fontFamilies.heading, fontWeight: '400', fontSize: 10 },
   avatarShell: {
     padding: 2,
     borderWidth: 2,
@@ -1691,11 +1657,11 @@ const styles = StyleSheet.create({
     borderColor: '#fff',
   },
   diceBubble: {
-    minWidth: 70,
-    minHeight: 62,
-    borderRadius: 14,
+    minWidth: 60,
+    minHeight: 52,
+    borderRadius: 13,
     backgroundColor: '#A47E1A',
-    borderWidth: 3,
+    borderWidth: 2,
     borderColor: '#C89A2B',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1709,10 +1675,19 @@ const styles = StyleSheet.create({
   },
   remoteDiceBubble: {
     position: 'absolute',
-    right: 68,
-    top: 10,
-    minWidth: 62,
-    minHeight: 56,
+    right: 64,
+    top: 8,
+    minWidth: 54,
+    minHeight: 48,
+    backgroundColor: '#A38621',
+    borderColor: colors.goldDark,
+  },
+  remoteDiceBubbleLeft: {
+    position: 'absolute',
+    left: 64,
+    top: 8,
+    minWidth: 54,
+    minHeight: 48,
     backgroundColor: '#A38621',
     borderColor: colors.goldDark,
   },
@@ -1723,25 +1698,33 @@ const styles = StyleSheet.create({
   },
   dicePointer: {
     position: 'absolute',
-    right: -14,
+    right: -11,
     width: 0,
     height: 0,
-    borderTopWidth: 11,
-    borderBottomWidth: 11,
-    borderLeftWidth: 15,
+    borderTopWidth: 9,
+    borderBottomWidth: 9,
+    borderLeftWidth: 12,
     borderTopColor: 'transparent',
     borderBottomColor: 'transparent',
     borderLeftColor: '#C89A2B',
   },
+  dicePointerLeft: {
+    left: -11,
+    right: undefined,
+    borderLeftWidth: 0,
+    borderLeftColor: 'transparent',
+    borderRightWidth: 12,
+    borderRightColor: '#C89A2B',
+  },
   poolDiceRow: {
     flexDirection: 'row',
     gap: 5,
-    minHeight: 22,
+    height: 25,
     alignItems: 'center',
-    marginBottom: 3,
+    marginBottom: 0,
   },
   poolDiceRowCompact: {
-    marginTop: 4,
+    marginTop: 8,
     marginBottom: 0,
     gap: 3,
   },
@@ -1776,7 +1759,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#33F083',
   },
   boardWrap: {
-    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 0,
@@ -1805,9 +1787,19 @@ const styles = StyleSheet.create({
   particleLayer: {
     zIndex: 3,
   },
-  localBarPlaceholder: { minHeight: 118 },
+  localBarPlaceholder: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: '100%',
+    height: 132,
+  },
   localBar: {
-    minHeight: 118,
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: '100%',
+    height: 132,
     paddingHorizontal: 10,
     paddingTop: 2,
     paddingBottom: 4,
@@ -1817,7 +1809,8 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.heading,
     fontSize: 14,
     fontWeight: '400',
-    marginBottom: 3,
+    height: 25,
+    marginBottom: 0,
     textShadowColor: '#000',
     textShadowRadius: 4,
   },
@@ -1825,6 +1818,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 14,
+    marginTop: 6,
   },
   quickStack: {
     gap: 3,
@@ -2138,13 +2132,5 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.heading,
     fontSize: 16,
     fontWeight: '400',
-  },
-  hint: {
-    ...typography.caption,
-    color: colors.textMuted,
-    height: 18,
-    paddingHorizontal: spacing.md,
-    paddingTop: 1,
-    textAlign: 'center',
   },
 });

@@ -32,17 +32,17 @@ type Props = {
 };
 
 const PLAYER_HEX: Record<Color, string> = {
-  red: '#FF123D',
-  green: '#6BCB2F',
-  yellow: '#F6F000',
-  blue: '#2197F2',
+  red: '#F5223D',
+  green: '#21B94B',
+  yellow: '#FFD51F',
+  blue: '#1677FF',
 };
 
 const PLAYER_DARK: Record<Color, string> = {
-  red: '#8E0804',
-  green: '#117014',
-  yellow: '#9B7600',
-  blue: '#2511B8',
+  red: '#8B0616',
+  green: '#075D2A',
+  yellow: '#9B6200',
+  blue: '#0B2A97',
 };
 
 const HOME_BASE_TL: Record<Color, { col: number; row: number }> = {
@@ -52,10 +52,10 @@ const HOME_BASE_TL: Record<Color, { col: number; row: number }> = {
   blue: { col: 0, row: 9 },
 };
 
-const CREAM_CELL = 'rgba(255, 250, 225, 0.94)';
-const GOLD_CELL = 'rgba(255, 244, 185, 0.9)';
-const TRAY_GOLD = '#C78308';
-const RIM_GOLD = '#B56F07';
+const CREAM_CELL = 'rgba(255, 251, 232, 0.98)';
+const GOLD_CELL = 'rgba(255, 227, 128, 0.96)';
+const TRAY_GOLD = '#A86105';
+const RIM_GOLD = '#7B3F03';
 
 const SPARKLES = [
   [0.08, 0.1, 0.9],
@@ -97,7 +97,7 @@ export function BoardCanvas({ size, perspectiveColor = 'blue' }: Props) {
         <LinearGradient
           start={vec(0, 0)}
           end={vec(size, size)}
-          colors={['#FFF2A7', '#C98408', '#FFE36C', '#A76003']}
+          colors={['#FFF4B1', '#C17607', '#FFE064', '#804102']}
           positions={[0, 0.32, 0.62, 1]}
         />
       </RoundedRect>
@@ -106,11 +106,11 @@ export function BoardCanvas({ size, perspectiveColor = 'blue' }: Props) {
         <LinearGradient
           start={vec(0, 0)}
           end={vec(size, size)}
-          colors={['#FFF8C8', '#D99F16', '#FFE177', '#B56E05']}
+          colors={['#FFF9CF', '#D1910D', '#FFE179', '#8F4A03']}
         />
       </RoundedRect>
 
-      <RoundedRect x={size * 0.02} y={size * 0.022} width={size * 0.96} height={size * 0.956} r={outerRadius * 0.72} color="#F0BE34" />
+      <RoundedRect x={size * 0.02} y={size * 0.022} width={size * 0.96} height={size * 0.956} r={outerRadius * 0.72} color="#E0A21E" />
       <RoundedRect x={size * 0.03} y={size * 0.032} width={size * 0.94} height={size * 0.936} r={outerRadius * 0.58} color={TRAY_GOLD} />
       <RoundedRect
         x={inset - cell * 0.055}
@@ -263,12 +263,22 @@ function BoardCell({
 
   return (
     <>
-      <RoundedRect x={x + size * 0.02} y={y + size * 0.025} width={side} height={side} r={size * 0.1} color="#9F6D08" opacity={0.12} />
+      <RoundedRect x={x + size * 0.026} y={y + size * 0.03} width={side} height={side} r={size * 0.1} color="#3D2100" opacity={0.22} />
       <RoundedRect x={x} y={y} width={side} height={side} r={size * 0.1} color={fill} />
-      <RoundedRect x={x + size * 0.03} y={y + size * 0.03} width={side - size * 0.06} height={side - size * 0.06} r={size * 0.08} color={withAlpha('#FFFFFF', 0.16)} style="stroke" strokeWidth={size * 0.018} />
-      {star && <Path path={starPath(x + side / 2, y + side / 2, size * 0.26, size * 0.45)} color="#F4AA00" />}
+      <RoundedRect
+        x={x}
+        y={y}
+        width={side}
+        height={side}
+        r={size * 0.1}
+        color={withAlpha(tone === 'color' ? '#2A1600' : '#7A3F00', tone === 'color' ? 0.3 : 0.18)}
+        style="stroke"
+        strokeWidth={size * 0.028}
+      />
+      <RoundedRect x={x + size * 0.035} y={y + size * 0.035} width={side - size * 0.07} height={side - size * 0.07} r={size * 0.075} color={withAlpha('#FFFFFF', tone === 'color' ? 0.22 : 0.28)} style="stroke" strokeWidth={size * 0.018} />
+      {star && <Path path={starPath(x + side / 2, y + side / 2, size * 0.26, size * 0.45)} color="#B45E00" />}
       {star && <Path path={starPath(x + side / 2, y + side / 2, size * 0.26, size * 0.45)} color="#FFE97D" style="stroke" strokeWidth={size * 0.045} />}
-      {arrow && <Path path={arrowPath(x + side / 2, y + side / 2, size * 0.33, arrow)} color={withAlpha('#000000', tone === 'color' ? 0.18 : 0.1)} />}
+      {arrow && <Path path={arrowPath(x + side / 2, y + side / 2, size * 0.33, arrow)} color={withAlpha('#000000', tone === 'color' ? 0.26 : 0.14)} />}
     </>
   );
 }

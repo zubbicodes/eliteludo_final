@@ -4,6 +4,7 @@ import test from 'node:test';
 import { COLOR_START_INDEX, SAFE_TRACK_INDICES } from '../src/game/board';
 import {
   addRoll,
+  advanceToNextPlayer,
   applyMove,
   checkWin,
   finishMove,
@@ -190,10 +191,50 @@ test('runtime 4p color assignment uses each color exactly once', () => {
   assert.deepEqual([...seats].sort(), ['blue', 'green', 'red', 'yellow']);
 });
 
+test('runtime 4p turn order follows the visual board circle from local player', () => {
+  for (let i = 0; i < 30; i++) {
+    const seats = assignRuntimeColors(4);
+    assert.deepEqual(
+      seats.map((color) => visualCornerForColor(color, seats[0])),
+      ['bottomLeft', 'topLeft', 'topRight', 'bottomRight'],
+    );
+  }
+});
+
 test('runtime 3p color assignment creates three unique seats', () => {
   const seats = assignRuntimeColors(3);
   assert.equal(seats.length, 3);
   assert.equal(new Set(seats).size, 3);
+});
+
+test('runtime 3p turn order follows the selected visual board circle', () => {
+  for (let i = 0; i < 30; i++) {
+    const seats = assignRuntimeColors(3);
+    const corners = seats.map((color) => visualCornerForColor(color, seats[0]));
+    assert.equal(corners[0], 'bottomLeft');
+    assert.deepEqual(
+      [...corners].sort((a, b) =>
+        ['bottomLeft', 'topLeft', 'topRight', 'bottomRight'].indexOf(a) -
+        ['bottomLeft', 'topLeft', 'topRight', 'bottomRight'].indexOf(b),
+      ),
+      corners,
+    );
+  }
+});
+
+test('local 4p bot game advances clockwise around the visible board', () => {
+  const seats = assignRuntimeColors(4);
+  let state = makeInitialGameState(seats[0], 3, undefined, seats);
+
+  assert.deepEqual(
+    state.players.map((p) => visualCornerForColor(p.color, seats[0])),
+    ['bottomLeft', 'topLeft', 'topRight', 'bottomRight'],
+  );
+
+  for (const corner of ['topLeft', 'topRight', 'bottomRight', 'bottomLeft']) {
+    state = advanceToNextPlayer(state);
+    assert.equal(visualCornerForColor(state.players[state.currentPlayerIdx].color, seats[0]), corner);
+  }
 });
 
 test('perspective mapping places each assigned color bottom-left', () => {
