@@ -71,6 +71,9 @@ const PLAYER_HEX: Record<Color, string> = {
 
 const CITY_BACKGROUNDS: Record<string, ImageSourcePropType> = {
   newdelhi: Images.cityNewDelhi,
+  'new-delhi': Images.cityNewDelhi,
+  delhi: Images.cityNewDelhi,
+  dehli: Images.cityNewDelhi,
   london: Images.cityLondon,
   istanbul: Images.cityIstanbul,
   dubai: Images.cityDubai,
@@ -127,6 +130,7 @@ export default function GameScreen() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [requiresRoomPresence, setRequiresRoomPresence] = useState(false);
   const [roomReady, setRoomReady] = useState(true);
+  const [matchCitySlug, setMatchCitySlug] = useState<string | null>(null);
 
   const profile = useProfileStore((s) => s.profile);
   const hydrateProfile = useProfileStore((s) => s.hydrate);
@@ -164,9 +168,10 @@ export default function GameScreen() {
     opponentForfeitTimerRef.current = null;
     setRequiresRoomPresence(false);
     setRoomReady(true);
+    setMatchCitySlug(typeof citySlug === 'string' ? citySlug : null);
     setBotDriverUserId(null);
     setLocalUserId(null);
-  }, [matchId, gameMode]);
+  }, [matchId, gameMode, citySlug]);
 
   const boardSize = Math.min(
     width - spacing.xs,
@@ -180,6 +185,7 @@ export default function GameScreen() {
     if (!matchId || isSoloMatchId) return;
     const match = await getMatch(matchId);
     if (!match) return;
+    setMatchCitySlug(match.city_slug ?? null);
     const remote = normalizeMatchBoardState(match.board_state, matchPlayersRef.current, myColorRef.current);
     if (boardVersion(remote) >= boardVersion(stateRef.current)) {
       loadGame(remote);
@@ -290,6 +296,7 @@ export default function GameScreen() {
 
       const match = await getMatch(matchId);
       if (!match) return;
+      setMatchCitySlug(match.city_slug ?? null);
 
       const me = match.players.find((p) => p.user_id === session.user.id);
       if (!me) return;
@@ -755,13 +762,13 @@ export default function GameScreen() {
     onRoll: onHumanRoll,
     timerProgress,
   };
-  const cityBoardSource = typeof citySlug === 'string' && citySlug ? CITY_BACKGROUNDS[citySlug] : undefined;
+  const cityTableSource = citySourceForSlug(matchCitySlug ?? citySlug);
 
   if (!currentPlayer) return null;
 
   return (
     <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
-      <ImageBackground source={Images.bgHome} style={StyleSheet.absoluteFill} resizeMode="cover">
+      <ImageBackground source={cityTableSource ?? Images.bgHome} style={StyleSheet.absoluteFill} resizeMode="cover">
         <View style={styles.tableOverlay} />
       </ImageBackground>
 
@@ -790,7 +797,7 @@ export default function GameScreen() {
           <View style={[styles.boardWrap, { width: boardSize, height: boardSize }]}>
             <View style={[styles.boardSquare, { width: boardSize, height: boardSize }]}>
               <ImageBackground
-                source={cityBoardSource ?? Images.bgHome}
+                source={cityTableSource ?? Images.bgHome}
                 style={[StyleSheet.absoluteFill, styles.boardSurface]}
                 imageStyle={styles.boardCityImage}
                 resizeMode="cover"
@@ -1287,6 +1294,13 @@ function getPerspectiveColor(
   return state.players.find((p) => !p.isAI)?.color ?? state.players[0]?.color ?? 'blue';
 }
 
+function citySourceForSlug(slug?: string | string[] | null): ImageSourcePropType | undefined {
+  const value = Array.isArray(slug) ? slug[0] : slug;
+  if (!value) return undefined;
+  const normalized = value.toLowerCase().replace(/[\s_]+/g, '-');
+  return CITY_BACKGROUNDS[normalized] ?? CITY_BACKGROUNDS[normalized.replace(/-/g, '')];
+}
+
 function seatPlayersByCorner(players: Player[], perspectiveColor: Color) {
   const seats: Partial<Record<'topLeft' | 'topRight' | 'bottomRight' | 'bottomLeft', Player>> = {};
   for (const player of players) {
@@ -1468,7 +1482,7 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#050201' },
   tableOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(24,7,28,0.86)',
+    backgroundColor: 'rgba(12,4,18,0.48)',
   },
   topHud: {
     paddingHorizontal: 10,
