@@ -1,26 +1,26 @@
-// Premium gold dice rendered with Skia. Reanimated handles the roll zoom/spin
-// while Skia paints bevels, metallic highlights, and black diamond pips.
+// Premium gold dice rendered with cached Skia sprites. Reanimated owns the
+// roll transform and face cycling so rolling does not require React rerenders.
 
-import { useEffect } from 'react';
-import Animated, {
-  Easing,
-  useAnimatedStyle,
-  useSharedValue,
-  withRepeat,
-  withSequence,
-  withTiming,
-} from 'react-native-reanimated';
 import {
-  Canvas,
-  Circle,
-  Group,
-  LinearGradient,
-  Path,
-  Rect,
-  RoundedRect,
-  Skia,
-  vec,
+    Atlas,
+    Canvas,
+    PaintStyle,
+    Skia,
+    useRSXformBuffer,
+    useRectBuffer,
+    type SkCanvas,
+    type SkImage,
 } from '@shopify/react-native-skia';
+import { useEffect, useMemo } from 'react';
+import Animated, {
+    Easing,
+    useAnimatedStyle,
+    useFrameCallback,
+    useSharedValue,
+    withRepeat,
+    withSequence,
+    withTiming,
+} from 'react-native-reanimated';
 
 type Props = {
   size: number;
@@ -46,10 +46,27 @@ const GLITTER = [
   [0.76, 0.78, 0.01],
 ];
 
+type CachedDiceAtlas = {
+  image: SkImage;
+  spriteSize: number;
+};
+
+const DICE_ATLAS_CACHE = new Map<number, CachedDiceAtlas>();
+
 export function Dice({ size, value, rolling }: Props) {
   const scale = useSharedValue(1);
   const rotate = useSharedValue(0);
   const tilt = useSharedValue(0);
+  const faceIndex = useSharedValue(value ? value - 1 : 0);
+  const atlas = useMemo(() => getDiceAtlas(size), [size]);
+  const transforms = useRSXformBuffer(1, (transform) => {
+    'worklet';
+    transform.set(1, 0, 0, 0);
+  });
+  const sprites = useRectBuffer(1, (rect) => {
+    'worklet';
+    rect.setXYWH(faceIndex.value * atlas.spriteSize, 0, atlas.spriteSize, atlas.spriteSize);
+  });
 
   useEffect(() => {
     if (rolling) {
@@ -66,10 +83,18 @@ export function Dice({ size, value, rolling }: Props) {
       return;
     }
 
+    faceIndex.value = typeof value === 'number' ? value - 1 : faceIndex.value;
     scale.value = withTiming(1, { duration: 260, easing: Easing.out(Easing.back(1.25)) });
     rotate.value = withTiming(0, { duration: 260, easing: Easing.out(Easing.cubic) });
     tilt.value = withTiming(0, { duration: 220, easing: Easing.out(Easing.cubic) });
-  }, [rolling, rotate, scale, tilt, value]);
+  }, [faceIndex, rolling, rotate, scale, tilt, value]);
+
+  useFrameCallback((frameInfo) => {
+    'worklet';
+    if (!rolling) return;
+    const timestamp = frameInfo.timestamp ?? 0;
+    faceIndex.value = Math.floor(timestamp / 90) % 6;
+  }, true);
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [
@@ -81,61 +106,104 @@ export function Dice({ size, value, rolling }: Props) {
     ],
   }));
 
-  const face = rolling ? ((Math.floor(Date.now() / 120) % 6) + 1) : value;
-
   return (
     <Animated.View style={[{ width: size, height: size }, animatedStyle]}>
       <Canvas style={{ width: size, height: size }} pointerEvents="none">
-        <GoldDieFace size={size} value={face} />
+        <Atlas image={atlas.image} sprites={sprites} transforms={transforms} />
       </Canvas>
     </Animated.View>
   );
 }
 
-function GoldDieFace({ size, value }: { size: number; value: number | null }) {
+function getDiceAtlas(size: number) {
+  const cached = DICE_ATLAS_CACHE.get(size);
+  if (cached) return cached;
+
+  const surface = Skia.Surface.MakeOffscreen(size * 6, size);
+  if (!surface) {
+    throw new Error('Unable to create dice atlas surface');
+  }
+  const canvas = surface.getCanvas();
+  canvas.clear(Skia.Color('transparent'));
+  for (let face = 1; face <= 6; face++) {
+    drawDiceFace(canvas, size, face, (face - 1) * size, 0);
+  }
+  const atlas = {
+    image: surface.makeImageSnapshot(),
+    spriteSize: size,
+  };
+  DICE_ATLAS_CACHE.set(size, atlas);
+  return atlas;
+}
+
+function drawDiceFace(canvas: SkCanvas, size: number, value: number, offsetX: number, offsetY: number) {
   const radius = size * 0.22;
   const faceInset = size * 0.055;
   const pipSize = size * 0.112;
-  const dots = value ? DOTS[value] : [];
+  const fillPaint = Skia.Paint();
+  fillPaint.setAntiAlias(true);
+  const strokePaint = Skia.Paint();
+  strokePaint.setAntiAlias(true);
+  strokePaint.setStyle(PaintStyle.Stroke);
+  const dots = DOTS[value] ?? [];
 
-  return (
-    <>
-      <RoundedRect x={size * 0.07} y={size * 0.1} width={size * 0.88} height={size * 0.88} r={radius} color="rgba(38, 19, 1, 0.42)" />
-      <RoundedRect x={0} y={0} width={size} height={size} r={radius} color="#D89B13">
-        <LinearGradient
-          start={vec(0, 0)}
-          end={vec(size, size)}
-          colors={['#FFF5A5', '#F1B315', '#C17404', '#FFE174']}
-          positions={[0, 0.4, 0.72, 1]}
-        />
-      </RoundedRect>
-      <RoundedRect x={faceInset} y={faceInset} width={size - faceInset * 2} height={size - faceInset * 2} r={radius * 0.72} color="rgba(255,255,255,0.16)" style="stroke" strokeWidth={size * 0.034} />
-      <Rect x={size * 0.1} y={size * 0.11} width={size * 0.8} height={size * 0.1} color="rgba(255,255,255,0.16)" />
-      <Path path={bevelPath(size)} color="rgba(78, 37, 0, 0.24)" />
-      {GLITTER.map(([x, y, r], index) => (
-        <Circle key={`glitter-${index}`} cx={x * size} cy={y * size} r={r * size} color="rgba(255,255,255,0.58)" />
-      ))}
-      {dots.map(([x, y], index) => (
-        <Group key={`dot-${index}`}>
-          <Circle cx={x * size} cy={y * size} r={pipSize * 0.82} color="rgba(84, 45, 0, 0.42)" />
-          <Path path={diamondPath(x * size, y * size, pipSize)} color="#050505" />
-          <Path path={diamondFacetPath(x * size, y * size, pipSize)} color="rgba(255,255,255,0.28)" />
-          <Path path={diamondPath(x * size, y * size, pipSize)} color="#8A5C07" style="stroke" strokeWidth={size * 0.018} />
-        </Group>
-      ))}
-    </>
+  fillPaint.setColor(Skia.Color('rgba(38, 19, 1, 0.42)'));
+  canvas.drawRRect(
+    Skia.RRectXY(Skia.XYWHRect(offsetX + size * 0.07, offsetY + size * 0.1, size * 0.88, size * 0.88), radius, radius),
+    fillPaint,
   );
+  fillPaint.setColor(Skia.Color('#D89B13'));
+  canvas.drawRRect(
+    Skia.RRectXY(Skia.XYWHRect(offsetX, offsetY, size, size), radius, radius),
+    fillPaint,
+  );
+  fillPaint.setColor(Skia.Color('rgba(255,255,255,0.12)'));
+  canvas.drawRRect(
+    Skia.RRectXY(
+      Skia.XYWHRect(offsetX + size * 0.08, offsetY + size * 0.1, size * 0.72, size * 0.18),
+      radius * 0.42,
+      radius * 0.42,
+    ),
+    fillPaint,
+  );
+  strokePaint.setColor(Skia.Color('rgba(255,255,255,0.16)'));
+  strokePaint.setStrokeWidth(size * 0.034);
+  canvas.drawRRect(
+    Skia.RRectXY(
+      Skia.XYWHRect(offsetX + faceInset, offsetY + faceInset, size - faceInset * 2, size - faceInset * 2),
+      radius * 0.72,
+      radius * 0.72,
+    ),
+    strokePaint,
+  );
+  fillPaint.setColor(Skia.Color('rgba(78, 37, 0, 0.24)'));
+  canvas.drawPath(bevelPath(size, offsetX, offsetY), fillPaint);
+  for (const [x, y, glitterRadius] of GLITTER) {
+    fillPaint.setColor(Skia.Color('rgba(255,255,255,0.58)'));
+    canvas.drawCircle(offsetX + x * size, offsetY + y * size, glitterRadius * size, fillPaint);
+  }
+  for (const [x, y] of dots) {
+    fillPaint.setColor(Skia.Color('rgba(84, 45, 0, 0.42)'));
+    canvas.drawCircle(offsetX + x * size, offsetY + y * size, pipSize * 0.82, fillPaint);
+    fillPaint.setColor(Skia.Color('#050505'));
+    canvas.drawPath(diamondPath(offsetX + x * size, offsetY + y * size, pipSize), fillPaint);
+    fillPaint.setColor(Skia.Color('rgba(255,255,255,0.28)'));
+    canvas.drawPath(diamondFacetPath(offsetX + x * size, offsetY + y * size, pipSize), fillPaint);
+    strokePaint.setColor(Skia.Color('#8A5C07'));
+    strokePaint.setStrokeWidth(size * 0.018);
+    canvas.drawPath(diamondPath(offsetX + x * size, offsetY + y * size, pipSize), strokePaint);
+  }
 }
 
-function bevelPath(size: number) {
+function bevelPath(size: number, offsetX: number, offsetY: number) {
   const path = Skia.Path.Make();
-  path.moveTo(size * 0.82, size * 0.08);
-  path.quadTo(size * 0.94, size * 0.12, size * 0.94, size * 0.28);
-  path.lineTo(size * 0.94, size * 0.78);
-  path.quadTo(size * 0.92, size * 0.92, size * 0.78, size * 0.94);
-  path.lineTo(size * 0.93, size * 0.58);
-  path.lineTo(size * 0.93, size * 0.22);
-  path.quadTo(size * 0.91, size * 0.1, size * 0.82, size * 0.08);
+  path.moveTo(offsetX + size * 0.82, offsetY + size * 0.08);
+  path.quadTo(offsetX + size * 0.94, offsetY + size * 0.12, offsetX + size * 0.94, offsetY + size * 0.28);
+  path.lineTo(offsetX + size * 0.94, offsetY + size * 0.78);
+  path.quadTo(offsetX + size * 0.92, offsetY + size * 0.92, offsetX + size * 0.78, offsetY + size * 0.94);
+  path.lineTo(offsetX + size * 0.93, offsetY + size * 0.58);
+  path.lineTo(offsetX + size * 0.93, offsetY + size * 0.22);
+  path.quadTo(offsetX + size * 0.91, offsetY + size * 0.1, offsetX + size * 0.82, offsetY + size * 0.08);
   path.close();
   return path;
 }

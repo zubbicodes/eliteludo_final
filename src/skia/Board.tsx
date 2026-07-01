@@ -1,25 +1,15 @@
 // Skia Ludo board renderer. Tokens are layered above this canvas by the game screen,
 // so boardGeometry is the contract shared by art, hit targets, and token movement.
 
-import {
-  BlurMask,
-  Canvas,
-  Circle,
-  Group,
-  LinearGradient,
-  Path,
-  Rect,
-  RoundedRect,
-  Skia,
-  vec,
-} from '@shopify/react-native-skia';
+import { Canvas, createPicture, PaintStyle, Picture, Skia, type SkCanvas } from '@shopify/react-native-skia';
+import { useMemo } from 'react';
 
 import {
-  BOARD_SIZE,
-  HOME_BASE_SLOTS,
-  HOME_COL_CELLS,
-  OUTER_TRACK,
-  SAFE_TRACK_INDICES,
+    BOARD_SIZE,
+    HOME_BASE_SLOTS,
+    HOME_COL_CELLS,
+    OUTER_TRACK,
+    SAFE_TRACK_INDICES,
 } from '@/src/game/board';
 import { cellForPerspective, visualCornerForColor, type VisualCorner } from '@/src/game/perspective';
 import type { Color } from '@/src/game/types';
@@ -87,101 +77,102 @@ export function boardGeometry(size: number) {
 }
 
 export function BoardCanvas({ size, perspectiveColor = 'blue' }: Props) {
-  const { inset, playSize, cell } = boardGeometry(size);
-  const outerRadius = size * 0.045;
-  const trayRadius = cell * 0.28;
+  const picture = useMemo(
+    () => createPicture((canvas) => drawBoard(canvas, size, perspectiveColor), { width: size, height: size }),
+    [size, perspectiveColor],
+  );
 
   return (
     <Canvas style={{ width: size, height: size }} pointerEvents="none">
-      <RoundedRect x={0} y={0} width={size} height={size} r={outerRadius} color="#D99B13">
-        <LinearGradient
-          start={vec(0, 0)}
-          end={vec(size, size)}
-          colors={['#FFF4B1', '#C17607', '#FFE064', '#804102']}
-          positions={[0, 0.32, 0.62, 1]}
-        />
-      </RoundedRect>
-
-      <RoundedRect x={size * 0.01} y={size * 0.012} width={size * 0.98} height={size * 0.976} r={outerRadius * 0.86} color="#E3AE24">
-        <LinearGradient
-          start={vec(0, 0)}
-          end={vec(size, size)}
-          colors={['#FFF9CF', '#D1910D', '#FFE179', '#8F4A03']}
-        />
-      </RoundedRect>
-
-      <RoundedRect x={size * 0.02} y={size * 0.022} width={size * 0.96} height={size * 0.956} r={outerRadius * 0.72} color="#E0A21E" />
-      <RoundedRect x={size * 0.03} y={size * 0.032} width={size * 0.94} height={size * 0.936} r={outerRadius * 0.58} color={TRAY_GOLD} />
-      <RoundedRect
-        x={inset - cell * 0.055}
-        y={inset - cell * 0.055}
-        width={playSize + cell * 0.11}
-        height={playSize + cell * 0.11}
-        r={trayRadius * 0.85}
-        color={RIM_GOLD}
-        style="stroke"
-        strokeWidth={cell * 0.12}
-      />
-
-      {SPARKLES.map(([x, y, s], index) => (
-        <Sparkle key={`sparkle-${index}`} cx={x * size} cy={y * size} radius={cell * 0.055 * s} />
-      ))}
-
-      <Group transform={[{ translateX: inset }, { translateY: inset }]}>
-        <Rect x={0} y={0} width={playSize} height={playSize} color={TRAY_GOLD} />
-
-        {ALL_COLORS.map((color) => (
-          <HomeCourt key={`home-${color}`} color={color} cell={cell} perspectiveColor={perspectiveColor} />
-        ))}
-
-        {OUTER_TRACK.map((cellPosition, index) => {
-          const visual = cellForPerspective(cellPosition, perspectiveColor);
-          const startColor = ALL_COLORS.find((color) => startIndexFor(color) === index);
-          return (
-            <BoardCell
-              key={`track-${index}`}
-              col={visual.col}
-              row={visual.row}
-              size={cell}
-              tone={trackTone(index, startColor)}
-              color={startColor ? PLAYER_HEX[startColor] : undefined}
-              star={SAFE_TRACK_INDICES.has(index)}
-            />
-          );
-        })}
-
-        {ALL_COLORS.map((color) =>
-          HOME_COL_CELLS[color].map((cellPosition, index) => {
-            const visual = cellForPerspective(cellPosition, perspectiveColor);
-            return (
-              <BoardCell
-                key={`home-col-${color}-${index}`}
-                col={visual.col}
-                row={visual.row}
-                size={cell}
-                tone="color"
-                color={PLAYER_HEX[color]}
-                arrow={index === 0 ? arrowSideFor(color, perspectiveColor) : undefined}
-              />
-            );
-          }),
-        )}
-
-        <CenterFinish cell={cell} perspectiveColor={perspectiveColor} />
-      </Group>
+      <Picture picture={picture} />
     </Canvas>
   );
 }
 
-function HomeCourt({
-  color,
-  cell,
-  perspectiveColor,
-}: {
-  color: Color;
-  cell: number;
-  perspectiveColor: Color;
-}) {
+function drawBoard(canvas: SkCanvas, size: number, perspectiveColor: Color) {
+  const { inset, playSize, cell } = boardGeometry(size);
+  const outerRadius = size * 0.045;
+  const trayRadius = cell * 0.28;
+  const fillPaint = Skia.Paint();
+  fillPaint.setAntiAlias(true);
+  const strokePaint = Skia.Paint();
+  strokePaint.setAntiAlias(true);
+  strokePaint.setStyle(PaintStyle.Stroke);
+
+  fillPaint.setColor(Skia.Color('#D99B13'));
+  drawRoundedRect(canvas, fillPaint, 0, 0, size, size, outerRadius);
+  fillPaint.setColor(Skia.Color('#E3AE24'));
+  drawRoundedRect(canvas, fillPaint, size * 0.01, size * 0.012, size * 0.98, size * 0.976, outerRadius * 0.86);
+  fillPaint.setColor(Skia.Color('#E0A21E'));
+  drawRoundedRect(canvas, fillPaint, size * 0.02, size * 0.022, size * 0.96, size * 0.956, outerRadius * 0.72);
+  fillPaint.setColor(Skia.Color(TRAY_GOLD));
+  drawRoundedRect(canvas, fillPaint, size * 0.03, size * 0.032, size * 0.94, size * 0.936, outerRadius * 0.58);
+
+  strokePaint.setColor(Skia.Color(RIM_GOLD));
+  strokePaint.setStrokeWidth(cell * 0.12);
+  drawRoundedRect(
+    canvas,
+    strokePaint,
+    inset - cell * 0.055,
+    inset - cell * 0.055,
+    playSize + cell * 0.11,
+    playSize + cell * 0.11,
+    trayRadius * 0.85,
+  );
+
+  for (const [x, y, sparkleScale] of SPARKLES) {
+    drawSparkle(canvas, fillPaint, x * size, y * size, cell * 0.055 * sparkleScale);
+  }
+
+  canvas.save();
+  canvas.translate(inset, inset);
+
+  fillPaint.setColor(Skia.Color(TRAY_GOLD));
+  canvas.drawRect(Skia.XYWHRect(0, 0, playSize, playSize), fillPaint);
+
+  for (const color of ALL_COLORS) {
+    drawHomeCourt(canvas, fillPaint, strokePaint, color, cell, perspectiveColor);
+  }
+
+  OUTER_TRACK.forEach((cellPosition, index) => {
+    const visual = cellForPerspective(cellPosition, perspectiveColor);
+    const startColor = ALL_COLORS.find((color) => startIndexFor(color) === index);
+    drawBoardCell(canvas, fillPaint, strokePaint, {
+      col: visual.col,
+      row: visual.row,
+      size: cell,
+      tone: trackTone(index, startColor),
+      color: startColor ? PLAYER_HEX[startColor] : undefined,
+      star: SAFE_TRACK_INDICES.has(index),
+    });
+  });
+
+  for (const color of ALL_COLORS) {
+    HOME_COL_CELLS[color].forEach((cellPosition, index) => {
+      const visual = cellForPerspective(cellPosition, perspectiveColor);
+      drawBoardCell(canvas, fillPaint, strokePaint, {
+        col: visual.col,
+        row: visual.row,
+        size: cell,
+        tone: 'color',
+        color: PLAYER_HEX[color],
+        arrow: index === 0 ? arrowSideFor(color, perspectiveColor) : undefined,
+      });
+    });
+  }
+
+  drawCenterFinish(canvas, fillPaint, strokePaint, cell, perspectiveColor);
+  canvas.restore();
+}
+
+function drawHomeCourt(
+  canvas: SkCanvas,
+  fillPaint: ReturnType<typeof Skia.Paint>,
+  strokePaint: ReturnType<typeof Skia.Paint>,
+  color: Color,
+  cell: number,
+  perspectiveColor: Color,
+) {
   const tl = rectTopLeftForPerspective(HOME_BASE_TL[color], 6, perspectiveColor);
   const x = tl.col * cell + cell * 0.12;
   const y = tl.row * cell + cell * 0.12;
@@ -191,55 +182,39 @@ function HomeCourt({
   const innerSide = side - cell * 0.9;
   const radius = cell * 0.48;
 
-  return (
-    <>
-      <RoundedRect x={x - cell * 0.08} y={y + cell * 0.08} width={side} height={side} r={radius} color={PLAYER_DARK[color]} opacity={0.72} />
-      <RoundedRect x={x} y={y} width={side} height={side} r={radius} color={PLAYER_HEX[color]}>
-        <LinearGradient
-          start={vec(x, y)}
-          end={vec(x + side, y + side)}
-          colors={[lighten(color), PLAYER_HEX[color], darken(color)]}
-          positions={[0, 0.62, 1]}
-        />
-      </RoundedRect>
-      <RoundedRect
-        x={x}
-        y={y + side - cell * 0.22}
-        width={side}
-        height={cell * 0.22}
-        r={cell * 0.16}
-        color={PLAYER_DARK[color]}
-        opacity={0.28}
-      />
-      <RoundedRect
-        x={innerX}
-        y={innerY}
-        width={innerSide}
-        height={innerSide}
-        r={cell * 0.58}
-        color={PLAYER_DARK[color]}
-        style="stroke"
-        strokeWidth={cell * 0.08}
-        opacity={0.72}
-      />
-      {HOME_BASE_SLOTS[color].map((slot, index) => {
-        const visual = cellForPerspective(slot, perspectiveColor);
-        return (
-          <Circle
-            key={`well-${color}-${index}`}
-            cx={(visual.col + 0.5) * cell}
-            cy={(visual.row + 0.5) * cell}
-            r={cell * 0.58}
-            color={PLAYER_DARK[color]}
-            opacity={0.95}
-          />
-        );
-      })}
-    </>
-  );
+  fillPaint.setColor(Skia.Color(PLAYER_DARK[color]));
+  fillPaint.setAlphaf(0.72);
+  drawRoundedRect(canvas, fillPaint, x - cell * 0.08, y + cell * 0.08, side, side, radius);
+
+  fillPaint.setColor(Skia.Color(PLAYER_HEX[color]));
+  fillPaint.setAlphaf(1);
+  drawRoundedRect(canvas, fillPaint, x, y, side, side, radius);
+
+  fillPaint.setColor(Skia.Color(lighten(color)));
+  fillPaint.setAlphaf(0.24);
+  drawRoundedRect(canvas, fillPaint, x + cell * 0.14, y + cell * 0.16, side * 0.72, side * 0.24, radius * 0.55);
+
+  fillPaint.setColor(Skia.Color(PLAYER_DARK[color]));
+  fillPaint.setAlphaf(0.28);
+  drawRoundedRect(canvas, fillPaint, x, y + side - cell * 0.22, side, cell * 0.22, cell * 0.16);
+
+  strokePaint.setColor(Skia.Color(PLAYER_DARK[color]));
+  strokePaint.setStrokeWidth(cell * 0.08);
+  drawRoundedRect(canvas, strokePaint, innerX, innerY, innerSide, innerSide, cell * 0.58);
+
+  fillPaint.setColor(Skia.Color(PLAYER_DARK[color]));
+  fillPaint.setAlphaf(0.95);
+  for (const slot of HOME_BASE_SLOTS[color]) {
+    const visual = cellForPerspective(slot, perspectiveColor);
+    canvas.drawCircle((visual.col + 0.5) * cell, (visual.row + 0.5) * cell, cell * 0.58, fillPaint);
+  }
 }
 
-function BoardCell({
+function drawBoardCell(
+  canvas: SkCanvas,
+  fillPaint: ReturnType<typeof Skia.Paint>,
+  strokePaint: ReturnType<typeof Skia.Paint>,
+  {
   col,
   row,
   size,
@@ -261,29 +236,44 @@ function BoardCell({
   const side = size * 0.95;
   const fill = tone === 'color' ? color ?? GOLD_CELL : tone === 'gold' ? GOLD_CELL : CREAM_CELL;
 
-  return (
-    <>
-      <RoundedRect x={x + size * 0.026} y={y + size * 0.03} width={side} height={side} r={size * 0.1} color="#3D2100" opacity={0.22} />
-      <RoundedRect x={x} y={y} width={side} height={side} r={size * 0.1} color={fill} />
-      <RoundedRect
-        x={x}
-        y={y}
-        width={side}
-        height={side}
-        r={size * 0.1}
-        color={withAlpha(tone === 'color' ? '#2A1600' : '#7A3F00', tone === 'color' ? 0.3 : 0.18)}
-        style="stroke"
-        strokeWidth={size * 0.028}
-      />
-      <RoundedRect x={x + size * 0.035} y={y + size * 0.035} width={side - size * 0.07} height={side - size * 0.07} r={size * 0.075} color={withAlpha('#FFFFFF', tone === 'color' ? 0.22 : 0.28)} style="stroke" strokeWidth={size * 0.018} />
-      {star && <Path path={starPath(x + side / 2, y + side / 2, size * 0.26, size * 0.45)} color="#B45E00" />}
-      {star && <Path path={starPath(x + side / 2, y + side / 2, size * 0.26, size * 0.45)} color="#FFE97D" style="stroke" strokeWidth={size * 0.045} />}
-      {arrow && <Path path={arrowPath(x + side / 2, y + side / 2, size * 0.33, arrow)} color={withAlpha('#000000', tone === 'color' ? 0.26 : 0.14)} />}
-    </>
-  );
+  fillPaint.setColor(Skia.Color('#3D2100'));
+  fillPaint.setAlphaf(0.22);
+  drawRoundedRect(canvas, fillPaint, x + size * 0.026, y + size * 0.03, side, side, size * 0.1);
+
+  fillPaint.setColor(Skia.Color(fill));
+  fillPaint.setAlphaf(1);
+  drawRoundedRect(canvas, fillPaint, x, y, side, side, size * 0.1);
+
+  strokePaint.setColor(Skia.Color(withAlpha(tone === 'color' ? '#2A1600' : '#7A3F00', tone === 'color' ? 0.3 : 0.18)));
+  strokePaint.setStrokeWidth(size * 0.028);
+  drawRoundedRect(canvas, strokePaint, x, y, side, side, size * 0.1);
+
+  strokePaint.setColor(Skia.Color(withAlpha('#FFFFFF', tone === 'color' ? 0.22 : 0.28)));
+  strokePaint.setStrokeWidth(size * 0.018);
+  drawRoundedRect(canvas, strokePaint, x + size * 0.035, y + size * 0.035, side - size * 0.07, side - size * 0.07, size * 0.075);
+
+  if (star) {
+    fillPaint.setColor(Skia.Color('#B45E00'));
+    canvas.drawPath(starPath(x + side / 2, y + side / 2, size * 0.26, size * 0.45), fillPaint);
+    strokePaint.setColor(Skia.Color('#FFE97D'));
+    strokePaint.setStrokeWidth(size * 0.045);
+    canvas.drawPath(starPath(x + side / 2, y + side / 2, size * 0.26, size * 0.45), strokePaint);
+  }
+
+  if (arrow) {
+    fillPaint.setColor(Skia.Color(withAlpha('#000000', tone === 'color' ? 0.26 : 0.14)));
+    fillPaint.setAlphaf(1);
+    canvas.drawPath(arrowPath(x + side / 2, y + side / 2, size * 0.33, arrow), fillPaint);
+  }
 }
 
-function CenterFinish({ cell, perspectiveColor }: { cell: number; perspectiveColor: Color }) {
+function drawCenterFinish(
+  canvas: SkCanvas,
+  fillPaint: ReturnType<typeof Skia.Paint>,
+  strokePaint: ReturnType<typeof Skia.Paint>,
+  cell: number,
+  perspectiveColor: Color,
+) {
   const x = 6 * cell;
   const y = 6 * cell;
   const side = 3 * cell;
@@ -301,27 +291,51 @@ function CenterFinish({ cell, perspectiveColor }: { cell: number; perspectiveCol
     sideColor[sideName] = color;
   }
 
-  return (
-    <>
-      <Rect x={x} y={y} width={side} height={side} color="#050302" />
-      <Path path={trianglePath(center, x, y, side, 'top')} color={PLAYER_HEX[sideColor.top]} />
-      <Path path={trianglePath(center, x, y, side, 'right')} color={PLAYER_HEX[sideColor.right]} />
-      <Path path={trianglePath(center, x, y, side, 'bottom')} color={PLAYER_HEX[sideColor.bottom]} />
-      <Path path={trianglePath(center, x, y, side, 'left')} color={PLAYER_HEX[sideColor.left]} />
-      <Path path={diamondStrokePath(x, y, side)} color={withAlpha('#FFFFFF', 0.22)} style="stroke" strokeWidth={cell * 0.035} />
-    </>
-  );
+  fillPaint.setColor(Skia.Color('#050302'));
+  canvas.drawRect(Skia.XYWHRect(x, y, side, side), fillPaint);
+  fillPaint.setColor(Skia.Color(PLAYER_HEX[sideColor.top]));
+  canvas.drawPath(trianglePath(center, x, y, side, 'top'), fillPaint);
+  fillPaint.setColor(Skia.Color(PLAYER_HEX[sideColor.right]));
+  canvas.drawPath(trianglePath(center, x, y, side, 'right'), fillPaint);
+  fillPaint.setColor(Skia.Color(PLAYER_HEX[sideColor.bottom]));
+  canvas.drawPath(trianglePath(center, x, y, side, 'bottom'), fillPaint);
+  fillPaint.setColor(Skia.Color(PLAYER_HEX[sideColor.left]));
+  canvas.drawPath(trianglePath(center, x, y, side, 'left'), fillPaint);
+  strokePaint.setColor(Skia.Color(withAlpha('#FFFFFF', 0.22)));
+  strokePaint.setStrokeWidth(cell * 0.035);
+  canvas.drawPath(diamondStrokePath(x, y, side), strokePaint);
 }
 
-function Sparkle({ cx, cy, radius }: { cx: number; cy: number; radius: number }) {
-  return (
-    <>
-      <Circle cx={cx} cy={cy} r={radius * 3.2} color="#FFF4A2" opacity={0.18}>
-        <BlurMask blur={radius * 5} style="normal" />
-      </Circle>
-      <Circle cx={cx} cy={cy} r={radius} color="#FFFFFF" />
-      <Path path={sparklePath(cx, cy, radius * 4.8)} color="#FFF6B5" opacity={0.82} />
-    </>
+function drawSparkle(
+  canvas: SkCanvas,
+  fillPaint: ReturnType<typeof Skia.Paint>,
+  cx: number,
+  cy: number,
+  radius: number,
+) {
+  fillPaint.setColor(Skia.Color('#FFF4A2'));
+  fillPaint.setAlphaf(0.18);
+  canvas.drawCircle(cx, cy, radius * 3.2, fillPaint);
+  fillPaint.setColor(Skia.Color('#FFFFFF'));
+  fillPaint.setAlphaf(1);
+  canvas.drawCircle(cx, cy, radius, fillPaint);
+  fillPaint.setColor(Skia.Color('#FFF6B5'));
+  fillPaint.setAlphaf(0.82);
+  canvas.drawPath(sparklePath(cx, cy, radius * 4.8), fillPaint);
+}
+
+function drawRoundedRect(
+  canvas: SkCanvas,
+  paint: ReturnType<typeof Skia.Paint>,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number,
+) {
+  canvas.drawRRect(
+    Skia.RRectXY(Skia.XYWHRect(x, y, width, height), radius, radius),
+    paint,
   );
 }
 
