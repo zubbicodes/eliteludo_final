@@ -1,5 +1,5 @@
 import { getCachedSettings } from '@/src/stores/settings';
-import { Audio } from 'expo-av';
+import { createAudioPlayer, type AudioPlayer } from 'expo-audio';
 
 type SoundCue = 
   | 'tap'           // Button clicks
@@ -26,7 +26,7 @@ const soundAssets: Partial<Record<SoundCue, any>> = {
 };
 
 // Cache loaded sounds
-const soundCache = new Map<SoundCue, Audio.Sound>();
+const soundCache = new Map<SoundCue, AudioPlayer>();
 
 export const sound = {
   async play(cue: SoundCue) {
@@ -42,17 +42,13 @@ export const sound = {
     try {
       let soundObj = soundCache.get(cue);
       if (!soundObj) {
-        // Load sound if not in cache
-        const { sound: newSound } = await Audio.Sound.createAsync(
-          asset,
-          { shouldPlay: false }
-        );
+        const newSound = createAudioPlayer(asset);
         soundCache.set(cue, newSound);
         soundObj = newSound;
       }
 
-      // Replay the sound
-      await soundObj.replayAsync();
+      await soundObj.seekTo(0);
+      soundObj.play();
     } catch (error) {
       console.warn(`Failed to play sound "${cue}":`, error);
     }
@@ -68,10 +64,7 @@ export const sound = {
     for (const [cue, asset] of Object.entries(soundAssets) as [SoundCue, any][]) {
       try {
         if (!soundCache.has(cue)) {
-          const { sound } = await Audio.Sound.createAsync(
-            asset,
-            { shouldPlay: false }
-          );
+          const sound = createAudioPlayer(asset);
           soundCache.set(cue, sound);
         }
       } catch (error) {
@@ -83,7 +76,7 @@ export const sound = {
   async unload() {
     // Unload all sounds to free memory
     for (const [, soundObj] of soundCache) {
-      await soundObj.unloadAsync();
+      soundObj.remove();
     }
     soundCache.clear();
   },

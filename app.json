@@ -44,7 +44,10 @@
           "resizeMode": "contain",
           "backgroundColor": "#0A0A0A"
         }
-      ]
+      ],
+      "expo-audio",
+      "expo-font",
+      "expo-web-browser"
     ],
     "extra": {
       "adMob": {

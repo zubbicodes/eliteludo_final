@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import {
     Alert,
     Dimensions,
@@ -27,6 +27,7 @@ import Animated, {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Images } from "@/src/assets";
+import { CoinFlyAnimation } from "@/src/components/CoinFlyAnimation";
 import { DailyRewardModal } from "@/src/components/DailyRewardModal";
 import { BannerAd, BannerAdSize, homeBannerAdUnitId } from "@/src/services/ads";
 import {
@@ -58,6 +59,7 @@ const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 type HomeView = "modes" | "clubs";
 type ModeId = "2p" | "4p" | "private" | "friends" | "ai";
 type OfflinePlayerCount = 2 | 3 | 4;
+type Point = { x: number; y: number };
 
 type Mode = {
   id: ModeId;
@@ -300,6 +302,9 @@ export default function HomeScreen() {
     null,
   );
   const [claiming, setClaiming] = useState(false);
+  const [coinTarget, setCoinTarget] = useState<Point | null>(null);
+  const [coinFlightStart, setCoinFlightStart] = useState<Point | null>(null);
+  const [coinFlightId, setCoinFlightId] = useState<number | null>(null);
   const [eventDaysLeft, setEventDaysLeft] = useState(() =>
     daysUntil(WORLD_CUP_END),
   );
@@ -430,6 +435,7 @@ export default function HomeScreen() {
           sound.play('tap');
           router.push("/settings");
         }}
+        onCoinTarget={setCoinTarget}
       />
       {view === "modes" ? (
         <>
@@ -481,14 +487,16 @@ export default function HomeScreen() {
       <DailyRewardModal
         visible={rewardOpen}
         pendingDay={pendingDay}
-        onClaim={async () => {
+        onClaim={async (origin) => {
           if (claiming) return;
           setClaiming(true);
           const r = await claimDaily();
           if (r.success) {
             haptics.success();
             setDismissedRewardDay(r.day);
+            setCoinFlightStart(origin);
             setRewardOpen(false);
+            setCoinFlightId(Date.now());
           } else {
             Alert.alert("Reward not collected", rewardErrorMessage(r.reason));
           }
@@ -510,6 +518,17 @@ export default function HomeScreen() {
           size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER}
         />
       </View>
+      {coinFlightId !== null && (
+        <CoinFlyAnimation
+          id={coinFlightId}
+          start={coinFlightStart ?? { x: viewport.width / 2, y: viewport.height * 0.6 }}
+          end={coinTarget ?? { x: viewport.width / 2 - 42, y: insets.top + 22 }}
+          onDone={() => {
+            setCoinFlightId(null);
+            setCoinFlightStart(null);
+          }}
+        />
+      )}
     </View>
   );
 }
@@ -627,17 +646,29 @@ function Header({
   username,
   onProfile,
   onSettings,
+  onCoinTarget,
 }: {
   top: number;
   coins: number;
   username: string;
   onProfile: () => void;
   onSettings: () => void;
+  onCoinTarget: (point: Point) => void;
 }) {
+  const coinRef = useRef<View>(null);
+  const measureCoin = useCallback(() => {
+    requestAnimationFrame(() => {
+      coinRef.current?.measureInWindow((x, y, width, height) => {
+        onCoinTarget({ x: x + width * 0.24, y: y + height * 0.5 });
+      });
+    });
+  }, [onCoinTarget]);
+
   return (
     <Animated.View
       entering={FadeIn.duration(300)}
       style={[styles.header, { marginTop: top + 4 }]}
+      onLayout={measureCoin}
     >
       <Pressable
         onPress={onProfile}
@@ -654,7 +685,7 @@ function Header({
       </Pressable>
 
       <View style={styles.walletRow}>
-        <CurrencyPill kind="coin" value={fmt(coins)} />
+        <CurrencyPill kind="coin" value={fmt(coins)} pillRef={coinRef} onLayout={measureCoin} />
         <CurrencyPill kind="gem" value="0" />
       </View>
 
@@ -744,12 +775,16 @@ function CornerAction({
 function CurrencyPill({
   kind,
   value,
+  pillRef,
+  onLayout,
 }: {
   kind: "coin" | "gem";
   value: string;
+  pillRef?: RefObject<View | null>;
+  onLayout?: () => void;
 }) {
   return (
-    <View style={styles.currencyPill}>
+    <View ref={pillRef} onLayout={onLayout} style={styles.currencyPill}>
       {kind === "coin" ? (
         <View style={styles.coinPillEdge}>
           <RoyalCurrencyIcon kind="coin" size={36} />

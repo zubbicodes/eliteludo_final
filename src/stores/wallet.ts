@@ -73,30 +73,39 @@ export const useWalletStore = create<WalletState>((set, get) => ({
     const pending = get().pendingClaim();
     if (!pending) return { success: false, reason: 'already_collected' };
 
-    const result = await collectDailyReward();
-    if (result?.success) {
-      set({
-        coins: result.balance ?? get().coins + (result.rewardAmount ?? pending.reward),
-        dailyStatus: {
-          dayNumber: result.dayNumber ? Math.min(result.dayNumber + 1, 7) : pending.day,
-          lastCollectedAt: new Date().toISOString(),
-          streakActive: result.streakActive ?? true,
-          canCollect: false,
-          nextAvailable: result.nextAvailable ?? null,
-        },
+    const claimedAt = new Date().toISOString();
+    set({
+      coins: get().coins + pending.reward,
+      dailyStatus: {
+        dayNumber: Math.min(pending.day + 1, 7),
+        lastCollectedAt: claimedAt,
+        streakActive: true,
+        canCollect: false,
+        nextAvailable: null,
+      },
+    });
+
+    void collectDailyReward()
+      .then(async (result) => {
+        if (result?.success) {
+          set({
+            coins: result.balance ?? get().coins,
+            dailyStatus: {
+              dayNumber: result.dayNumber ? Math.min(result.dayNumber + 1, 7) : Math.min(pending.day + 1, 7),
+              lastCollectedAt: claimedAt,
+              streakActive: result.streakActive ?? true,
+              canCollect: false,
+              nextAvailable: result.nextAvailable ?? null,
+            },
+          });
+          return;
+        }
+        await get().refresh();
+      })
+      .catch(async () => {
+        await get().refresh();
       });
-      await get().refresh();
-      return {
-        success: true,
-        day: result.dayNumber ?? pending.day,
-        reward: result.rewardAmount ?? pending.reward,
-      };
-    }
 
-    if (result?.reason === 'already_collected') {
-      await get().refresh();
-    }
-
-    return { success: false, reason: result?.reason ?? 'unknown_error' };
+    return { success: true, day: pending.day, reward: pending.reward };
   },
 }));

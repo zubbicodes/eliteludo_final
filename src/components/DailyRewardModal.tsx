@@ -1,292 +1,371 @@
-import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
-import { Image, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
-import Animated, { FadeIn, ZoomIn } from 'react-native-reanimated';
+import { Ionicons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
+import { useCallback, useRef } from "react";
+import {
+  Modal,
+  Pressable,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View,
+} from "react-native";
+import Animated, { FadeIn } from "react-native-reanimated";
 
-import { Images } from '@/src/assets';
-import { DAILY_REWARDS } from '@/src/stores/wallet';
-import { colors } from '@/src/theme/colors';
-import { sound } from '@/src/utils/sound';
+import { RoyalCurrencyIcon, RoyalHomeBackdrop } from "@/src/skia/HomeArtwork";
+import { DAILY_REWARDS } from "@/src/stores/wallet";
+import { fontFamilies } from "@/src/theme/typography";
+import { sound } from "@/src/utils/sound";
+
+type Point = {
+  x: number;
+  y: number;
+};
 
 type Props = {
   visible: boolean;
   pendingDay: number;
-  onClaim: () => void;
+  onClaim: (origin: Point) => void;
   onClose: () => void;
 };
 
 export function DailyRewardModal({ visible, pendingDay, onClaim, onClose }: Props) {
+  const viewport = useWindowDimensions();
+  const collectRef = useRef<View>(null);
   const todayReward = DAILY_REWARDS[Math.max(0, pendingDay - 1)];
+  const panelWidth = Math.min(viewport.width - 28, 398);
+
+  const measureCollectOrigin = useCallback((callback: (point: Point) => void) => {
+    collectRef.current?.measureInWindow((x, y, width, height) => {
+      callback({ x: x + width * 0.22, y: y + height * 0.5 });
+    });
+  }, []);
 
   const handleClaim = () => {
-    sound.play('tap');
-    sound.play('coin');
-    onClaim();
+    sound.play("tap");
+    sound.play("coin");
+    measureCollectOrigin((origin) => onClaim(origin));
   };
 
   const handleClose = () => {
-    sound.play('tap');
+    sound.play("tap");
     onClose();
   };
 
   return (
     <Modal visible={visible} transparent animationType="none" statusBarTranslucent onRequestClose={handleClose}>
-      <Animated.View entering={FadeIn.duration(220)} style={styles.backdrop}>
+      <View style={styles.backdrop}>
+        <View style={StyleSheet.absoluteFill}>
+          <RoyalHomeBackdrop width={viewport.width} height={viewport.height} />
+        </View>
+        <View style={styles.backdropTint} />
         <Pressable style={StyleSheet.absoluteFill} onPress={handleClose} />
 
-        <Animated.View entering={ZoomIn.delay(80).duration(300)} style={styles.container}>
-          {/* Gift box header — sits above the card */}
-          <View style={styles.giftWrap}>
-            <Image source={Images.giftBox} style={styles.giftBox} resizeMode="contain" />
+        <View style={[styles.panel, { width: panelWidth }]}>
+          <LinearGradient
+            colors={["rgba(39,26,11,0.98)", "rgba(8,6,4,0.99)"]}
+            style={StyleSheet.absoluteFill}
+          />
+          <View style={styles.innerStroke} />
+
+          <Pressable
+            onPress={handleClose}
+            accessibilityRole="button"
+            accessibilityLabel="Close daily rewards"
+            hitSlop={10}
+            style={styles.closeBtn}
+          >
+            <Ionicons name="close" size={18} color="#F8DE8A" />
+          </Pressable>
+
+          <Animated.View entering={FadeIn.delay(60).duration(220)} style={styles.header}>
+            <Text style={styles.eyebrow}>DAILY STREAK</Text>
+            <Text style={styles.title}>Reward Ready</Text>
+            <Text style={styles.subtitle}>Day {pendingDay} of 7</Text>
+          </Animated.View>
+
+          <Animated.View entering={FadeIn.delay(110).duration(240)} style={styles.rewardPlate}>
+            <View style={styles.coinHalo}>
+              <RoyalCurrencyIcon kind="coin" size={62} />
+            </View>
+            <View style={styles.rewardCopy}>
+              <Text style={styles.rewardLabel}>TODAY CLAIM</Text>
+              <Text style={styles.rewardValue}>+{todayReward.toLocaleString()}</Text>
+            </View>
+          </Animated.View>
+
+          <View style={styles.grid}>
+            {DAILY_REWARDS.map((amount, index) => {
+              const day = index + 1;
+              return (
+                <RewardDay
+                  key={day}
+                  day={day}
+                  amount={amount}
+                  claimed={day < pendingDay}
+                  active={day === pendingDay}
+                  bonus={day === 7}
+                />
+              );
+            })}
           </View>
 
-          {/* Main card */}
-          <LinearGradient
-            colors={['#1A1208', '#0F0C06']}
-            style={styles.card}
-          >
-            {/* Gold top border accent */}
-            <LinearGradient
-              colors={[colors.goldDark, colors.gold, colors.goldDark]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={styles.goldTopBorder}
-            />
-
-            {/* Banner */}
-            <Image
-              source={Images.dailyRewardsBanner}
-              style={styles.bannerImg}
-              resizeMode="contain"
-            />
-
-            <Text style={styles.streakText}>Day {pendingDay} of 7 — keep your streak alive</Text>
-
-            {/* Day grid */}
-            <View style={styles.grid}>
-              {DAILY_REWARDS.map((amount, i) => {
-                const day = i + 1;
-                const claimed = day < pendingDay;
-                const today = day === pendingDay;
-                const bonus = day === 7;
-                return (
-                  <DayCard
-                    key={day}
-                    day={day}
-                    amount={amount}
-                    claimed={claimed}
-                    today={today}
-                    bonus={bonus}
-                  />
-                );
-              })}
-            </View>
-
-            {/* Collect button */}
+          <Animated.View entering={FadeIn.delay(230).duration(240)} style={styles.footer}>
             <Pressable
+              ref={collectRef}
               onPress={handleClaim}
-              style={({ pressed }) => [styles.collectOuter, pressed && { opacity: 0.85 }]}
+              accessibilityRole="button"
+              accessibilityLabel={`Collect ${todayReward} coins`}
+              style={({ pressed }) => [styles.collectButton, pressed && styles.pressed]}
             >
               <LinearGradient
-                colors={['#3EC55A', '#2D8C3E']}
+                colors={["#F7D96C", "#A96B12"]}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 0, y: 1 }}
-                style={styles.collectGradient}
+                style={styles.collectFill}
               >
-                <Image source={Images.coinSingle} style={styles.collectCoin} />
-                <Text style={styles.collectText}>Collect {todayReward}</Text>
+                <RoyalCurrencyIcon kind="coin" size={34} />
+                <Text style={styles.collectText}>COLLECT</Text>
               </LinearGradient>
             </Pressable>
 
-            <Pressable onPress={handleClose} hitSlop={12} style={{ marginTop: 8 }}>
-              <Text style={styles.skipText}>Skip</Text>
+            <Pressable onPress={handleClose} hitSlop={12} style={styles.skipBtn}>
+              <Text style={styles.skipText}>Later</Text>
             </Pressable>
-          </LinearGradient>
-        </Animated.View>
-      </Animated.View>
+          </Animated.View>
+        </View>
+      </View>
     </Modal>
   );
 }
 
-function DayCard({
-  day, amount, claimed, today, bonus,
+function RewardDay({
+  day,
+  amount,
+  claimed,
+  active,
+  bonus,
 }: {
-  day: number; amount: number; claimed: boolean; today: boolean; bonus: boolean;
+  day: number;
+  amount: number;
+  claimed: boolean;
+  active: boolean;
+  bonus: boolean;
 }) {
   return (
-    <View style={[
-      styles.dayCard,
-      bonus && styles.dayCardBonus,
-      today && styles.dayCardToday,
-      claimed && styles.dayCardClaimed,
-    ]}>
-      {today && (
-        <LinearGradient
-          colors={['rgba(212,175,55,0.18)', 'rgba(212,175,55,0.06)']}
-          style={StyleSheet.absoluteFill}
-        />
-      )}
-      <Text style={[styles.dayLabel, today && styles.dayLabelToday, bonus && styles.dayLabelBonus]}>
-        {bonus ? 'Day 7' : today ? 'Today' : `Day ${day}`}
-      </Text>
-      {claimed ? (
-        <Ionicons name="checkmark-circle" size={26} color={colors.gold} />
-      ) : (
-        <View style={styles.amountRow}>
-          <Image source={Images.coinSingle} style={{ width: 18, height: 18 }} />
-          <Text style={[styles.amountText, bonus && styles.amountBonus]}>{amount}</Text>
-        </View>
-      )}
-      {bonus && !claimed && (
-        <View style={styles.bonusTag}>
-          <Text style={styles.bonusTagText}>BONUS</Text>
-        </View>
-      )}
-    </View>
+    <Animated.View
+      entering={FadeIn.delay(140 + day * 22).duration(200)}
+      style={[
+        styles.dayCard,
+        active && styles.dayCardActive,
+        claimed && styles.dayCardClaimed,
+        bonus && styles.dayCardBonus,
+      ]}
+    >
+      <Text style={[styles.dayText, active && styles.activeText]}>{day}</Text>
+      <View style={styles.dayCoinRow}>
+        <RoyalCurrencyIcon kind="coin" size={18} />
+        <Text style={[styles.amountText, active && styles.activeText]}>{amount}</Text>
+      </View>
+      {claimed && <Ionicons name="checkmark" size={13} color="#F8DE8A" style={styles.checkIcon} />}
+    </Animated.View>
   );
 }
 
 const styles = StyleSheet.create({
   backdrop: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.82)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 14,
   },
-  container: {
-    width: '100%',
-    maxWidth: 420,
-    alignItems: 'center',
+  backdropTint: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.76)",
   },
-  giftWrap: {
-    zIndex: 2,
-    marginBottom: -40,
-  },
-  giftBox: {
-    width: 120,
-    height: 120,
-  },
-  card: {
-    width: '100%',
-    borderRadius: 20,
+  panel: {
+    borderRadius: 22,
+    overflow: "hidden",
     borderWidth: 1,
-    borderColor: 'rgba(212,175,55,0.4)',
-    paddingTop: 52,
-    paddingBottom: 20,
-    paddingHorizontal: 16,
-    alignItems: 'center',
-    overflow: 'hidden',
+    borderColor: "rgba(248,222,138,0.34)",
+    paddingHorizontal: 18,
+    paddingTop: 22,
+    paddingBottom: 16,
+    boxShadow: "0 20px 50px rgba(0,0,0,0.38)",
   },
-  goldTopBorder: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 2,
+  innerStroke: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 21,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
   },
-  bannerImg: {
-    width: '90%',
-    height: 56,
-    marginBottom: 8,
+  closeBtn: {
+    position: "absolute",
+    top: 13,
+    right: 13,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(0,0,0,0.36)",
+    borderWidth: 1,
+    borderColor: "rgba(248,222,138,0.24)",
+    zIndex: 2,
   },
-  streakText: {
-    color: colors.textMuted,
+  header: {
+    alignItems: "center",
+    paddingHorizontal: 42,
+  },
+  eyebrow: {
+    color: "#D8B85C",
+    fontFamily: fontFamilies.body,
+    fontSize: 10,
+    letterSpacing: 2,
+  },
+  title: {
+    color: "#FFF0B5",
+    fontFamily: fontFamilies.heading,
+    fontSize: 27,
+    fontWeight: "400",
+    marginTop: 3,
+  },
+  subtitle: {
+    color: "rgba(255,244,210,0.62)",
+    fontFamily: fontFamilies.body,
     fontSize: 12,
-    marginBottom: 16,
-    textAlign: 'center',
+    marginTop: 3,
+  },
+  rewardPlate: {
+    marginTop: 18,
+    minHeight: 104,
+    borderRadius: 18,
+    backgroundColor: "rgba(0,0,0,0.28)",
+    borderWidth: 1,
+    borderColor: "rgba(248,222,138,0.16)",
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    gap: 14,
+  },
+  coinHalo: {
+    width: 78,
+    height: 78,
+    borderRadius: 39,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(212,175,55,0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(248,222,138,0.18)",
+  },
+  rewardCopy: {
+    flex: 1,
+  },
+  rewardLabel: {
+    color: "rgba(255,244,210,0.48)",
+    fontFamily: fontFamilies.body,
+    fontSize: 10,
+    letterSpacing: 1.4,
+  },
+  rewardValue: {
+    color: "#FFE47D",
+    fontFamily: fontFamilies.heading,
+    fontSize: 34,
+    fontWeight: "400",
+    fontVariant: ["tabular-nums"],
+    marginTop: 2,
   },
   grid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'center',
+    flexDirection: "row",
+    flexWrap: "wrap",
     gap: 8,
-    marginBottom: 20,
-    width: '100%',
+    justifyContent: "center",
+    marginTop: 16,
   },
   dayCard: {
-    width: '22%',
-    aspectRatio: 0.82,
-    backgroundColor: 'rgba(255,255,255,0.04)',
-    borderRadius: 10,
+    width: "22%",
+    minWidth: 72,
+    height: 68,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 3,
+    backgroundColor: "rgba(255,255,255,0.04)",
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 8,
-    gap: 5,
-    overflow: 'hidden',
+    borderColor: "rgba(255,255,255,0.08)",
+  },
+  dayCardActive: {
+    backgroundColor: "rgba(212,175,55,0.13)",
+    borderColor: "#F8DE8A",
   },
   dayCardClaimed: {
-    borderColor: 'rgba(212,175,55,0.3)',
-    backgroundColor: 'rgba(212,175,55,0.06)',
-  },
-  dayCardToday: {
-    borderColor: colors.gold,
-    borderWidth: 1.5,
+    backgroundColor: "rgba(212,175,55,0.08)",
+    borderColor: "rgba(248,222,138,0.22)",
   },
   dayCardBonus: {
-    width: '47%',
-    aspectRatio: 1.8,
-    borderColor: 'rgba(212,175,55,0.4)',
-    backgroundColor: 'rgba(212,175,55,0.05)',
+    width: "47%",
   },
-  dayLabel: {
-    color: colors.textDim,
-    fontSize: 10,
-    fontWeight: '600',
-    letterSpacing: 0.5,
+  dayText: {
+    color: "rgba(255,244,210,0.5)",
+    fontFamily: fontFamilies.heading,
+    fontSize: 13,
   },
-  dayLabelToday: { color: colors.gold },
-  dayLabelBonus: { color: colors.goldLight, fontSize: 11 },
-  amountRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
+  dayCoinRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 2,
   },
   amountText: {
-    color: colors.text,
-    fontSize: 13,
-    fontWeight: '700',
+    color: "rgba(255,244,210,0.7)",
+    fontFamily: fontFamilies.body,
+    fontSize: 11,
+    fontVariant: ["tabular-nums"],
   },
-  amountBonus: { fontSize: 18, color: colors.gold },
-  bonusTag: {
-    backgroundColor: 'rgba(212,175,55,0.2)',
-    borderRadius: 4,
-    paddingHorizontal: 5,
-    paddingVertical: 2,
+  activeText: {
+    color: "#FFE47D",
   },
-  bonusTagText: {
-    color: colors.gold,
-    fontSize: 8,
-    fontWeight: '800',
-    letterSpacing: 1,
+  checkIcon: {
+    position: "absolute",
+    top: 6,
+    right: 7,
   },
-  collectOuter: {
-    width: '88%',
-    borderRadius: 14,
-    overflow: 'hidden',
-    borderWidth: 1.5,
-    borderColor: 'rgba(212,175,55,0.5)',
-    elevation: 6,
-  },
-  collectGradient: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 15,
+  footer: {
+    alignItems: "center",
+    marginTop: 16,
     gap: 8,
   },
-  collectCoin: { width: 22, height: 22, resizeMode: 'contain' },
+  collectButton: {
+    width: "100%",
+    height: 54,
+    borderRadius: 16,
+    overflow: "hidden",
+    borderWidth: 1.5,
+    borderColor: "rgba(255,241,184,0.5)",
+  },
+  collectFill: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
   collectText: {
-    color: '#fff',
+    color: "#FFFFFF",
+    fontFamily: fontFamilies.heading,
     fontSize: 16,
-    fontWeight: '800',
-    letterSpacing: 1,
+    fontWeight: "400",
+    letterSpacing: 1.4,
+  },
+  pressed: {
+    opacity: 0.88,
+    transform: [{ scale: 0.98 }],
+  },
+  skipBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 4,
   },
   skipText: {
-    color: colors.textDim,
-    fontSize: 13,
-    textDecorationLine: 'underline',
+    color: "rgba(255,244,210,0.44)",
+    fontFamily: fontFamilies.body,
+    fontSize: 12,
   },
 });
