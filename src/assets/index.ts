@@ -1,6 +1,7 @@
 export const Images = {
   // Backgrounds
   bgHome: require('../../assets/images/bg-homepage.png'),
+  logoEliteLudo: require('../../assets/images/logo-elite-ludo.png'),
 
   // City backgrounds
   cityDubai: require('../../assets/images/city-dubai.png'),
@@ -18,6 +19,10 @@ export const Images = {
   // Dice sprite sheets (6 faces in a row, face index = value - 1)
   diceGold: require('../../assets/images/dice-gold.png'),
   diceBlack: require('../../assets/images/dice-black.png'),
+  tokenRed: require('../../assets/images/token-red.png'),
+  tokenBlue: require('../../assets/images/token-blue.png'),
+  tokenGreen: require('../../assets/images/token-green.png'),
+  tokenYellow: require('../../assets/images/token-yellow.png'),
 
   // UI chrome
   ornateFrame: require('../../assets/images/ornate-border-frame.png'),

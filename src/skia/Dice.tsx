@@ -1,9 +1,12 @@
 // Premium gold dice rendered with Skia. Reanimated owns the transform; the
 // visible face is always drawn through regular Skia components for reliability.
 
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
+import { StyleSheet } from 'react-native';
 import Animated, {
+  cancelAnimation,
   Easing,
+  type SharedValue,
   useAnimatedStyle,
   useSharedValue,
   withRepeat,
@@ -49,20 +52,13 @@ export function Dice({ size, value, rolling }: Props) {
   const scale = useSharedValue(1);
   const rotate = useSharedValue(0);
   const tilt = useSharedValue(0);
-  const [rollingFace, setRollingFace] = useState(1);
-
-  useEffect(() => {
-    if (!rolling) return;
-    const interval = setInterval(() => {
-      setRollingFace((face) => (face % 6) + 1);
-    }, 90);
-    return () => clearInterval(interval);
-  }, [rolling]);
+  const faceCycle = useSharedValue(0);
 
   useEffect(() => {
     if (rolling) {
       scale.value = withTiming(1.42, { duration: 160, easing: Easing.out(Easing.cubic) });
       rotate.value = withRepeat(withTiming(360, { duration: 520, easing: Easing.linear }), -1, false);
+      faceCycle.value = withRepeat(withTiming(6, { duration: 540, easing: Easing.linear }), -1, false);
       tilt.value = withRepeat(
         withTiming(16, { duration: 140, easing: Easing.inOut(Easing.quad) }),
         -1,
@@ -71,10 +67,12 @@ export function Dice({ size, value, rolling }: Props) {
       return;
     }
 
+    cancelAnimation(faceCycle);
+    faceCycle.value = 0;
     scale.value = withTiming(1, { duration: 260, easing: Easing.out(Easing.back(1.25)) });
     rotate.value = withTiming(0, { duration: 260, easing: Easing.out(Easing.cubic) });
     tilt.value = withTiming(0, { duration: 220, easing: Easing.out(Easing.cubic) });
-  }, [rolling, rotate, scale, tilt, value]);
+  }, [faceCycle, rolling, rotate, scale, tilt, value]);
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [
@@ -88,8 +86,37 @@ export function Dice({ size, value, rolling }: Props) {
 
   return (
     <Animated.View style={[{ width: size, height: size }, animatedStyle]}>
+      {rolling ? (
+        ([1, 2, 3, 4, 5, 6] as const).map((face) => (
+          <RollingFaceLayer key={face} face={face} size={size} faceCycle={faceCycle} />
+        ))
+      ) : (
+        <Canvas style={{ width: size, height: size }} pointerEvents="none">
+          <GoldDieFace size={size} value={value} />
+        </Canvas>
+      )}
+    </Animated.View>
+  );
+}
+
+function RollingFaceLayer({
+  face,
+  size,
+  faceCycle,
+}: {
+  face: number;
+  size: number;
+  faceCycle: SharedValue<number>;
+}) {
+  const layerStyle = useAnimatedStyle(() => {
+    const visibleFace = (Math.floor(faceCycle.value) % 6) + 1;
+    return { opacity: visibleFace === face ? 1 : 0 };
+  });
+
+  return (
+    <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, layerStyle]}>
       <Canvas style={{ width: size, height: size }} pointerEvents="none">
-        <GoldDieFace size={size} value={rolling ? rollingFace : value} />
+        <GoldDieFace size={size} value={face} />
       </Canvas>
     </Animated.View>
   );

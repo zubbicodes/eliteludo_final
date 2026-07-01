@@ -1,60 +1,41 @@
-import { router } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
-import { Dimensions, StyleSheet, Text, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { router } from 'expo-router';
+import { useEffect, useState } from 'react';
+import { Dimensions, StyleSheet, Text, View } from 'react-native';
 import Animated, {
   Easing,
   FadeIn,
+  interpolate,
   useAnimatedStyle,
   useSharedValue,
   withRepeat,
   withSequence,
   withTiming,
-  interpolate,
-  runOnJS,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAuthStore } from '@/src/stores/auth';
-import { useSettingsStore } from '@/src/stores/settings';
+import { preloadForBoot } from '@/src/startup/preload';
 import { colors } from '@/src/theme/colors';
 import { fontFamilies } from '@/src/theme/typography';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const BAR_W = SCREEN_W - 80;
-const SPLASH_MS = 3000;
-const TIP_MS = 520;
-
-const TIPS = [
-  'Loading your kingdom…',
-  'Polishing the golden dice…',
-  'Preparing the royal board…',
-  'Summoning your rivals…',
-  'Checking your crown…',
-  'Ready to roll!',
-];
+const MIN_SPLASH_MS = 1000;
+const PRELOAD_PROGRESS_MS = 280;
 
 export default function SplashScreen() {
   const insets = useSafeAreaInsets();
-  const hydrateSettings = useSettingsStore((s) => s.hydrate);
   const isHydrating = useAuthStore((s) => s.isHydrating);
   const session = useAuthStore((s) => s.session);
 
-  const [splashDone, setSplashDone] = useState(false);
-  const [tipIdx, setTipIdx] = useState(0);
-  const tipTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [bootDone, setBootDone] = useState(false);
+  const [tip, setTip] = useState('Loading your kingdom...');
 
   const progress = useSharedValue(0);
   const glowOpacity = useSharedValue(0.3);
 
   useEffect(() => {
-    hydrateSettings();
-
-    progress.value = withTiming(1, {
-      duration: SPLASH_MS,
-      easing: Easing.out(Easing.cubic),
-    }, (done) => { if (done) runOnJS(setSplashDone)(true); });
-
     glowOpacity.value = withRepeat(
       withSequence(
         withTiming(0.9, { duration: 1400, easing: Easing.inOut(Easing.quad) }),
@@ -62,21 +43,47 @@ export default function SplashScreen() {
       ),
       -1,
     );
-
-    let i = 0;
-    tipTimer.current = setInterval(() => {
-      i = Math.min(i + 1, TIPS.length - 1);
-      setTipIdx(i);
-    }, TIP_MS);
-
-    return () => { if (tipTimer.current) clearInterval(tipTimer.current); };
-  }, [glowOpacity, hydrateSettings, progress]);
+  }, [glowOpacity]);
 
   useEffect(() => {
-    if (!splashDone || isHydrating) return;
-    if (tipTimer.current) clearInterval(tipTimer.current);
+    if (isHydrating) return;
+
+    let cancelled = false;
+    const startedAt = Date.now();
+
+    preloadForBoot({
+      session,
+      onStage: (stage, nextProgress) => {
+        if (cancelled) return;
+        setTip(stage.label);
+        progress.value = withTiming(nextProgress, {
+          duration: PRELOAD_PROGRESS_MS,
+          easing: Easing.out(Easing.cubic),
+        });
+      },
+    })
+      .catch((error) => {
+        console.warn('[startup] boot preload failed:', error);
+        setTip('Ready to roll!');
+      })
+      .finally(() => {
+        const wait = Math.max(0, MIN_SPLASH_MS - (Date.now() - startedAt));
+        setTimeout(() => {
+          if (cancelled) return;
+          progress.value = withTiming(1, { duration: 180, easing: Easing.out(Easing.cubic) });
+          setBootDone(true);
+        }, wait);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isHydrating, progress, session]);
+
+  useEffect(() => {
+    if (!bootDone || isHydrating) return;
     router.replace(session ? '/(tabs)/home' : '/auth/login');
-  }, [splashDone, isHydrating, session]);
+  }, [bootDone, isHydrating, session]);
 
   const barStyle = useAnimatedStyle(() => ({
     width: interpolate(progress.value, [0, 1], [0, BAR_W]),
@@ -92,10 +99,8 @@ export default function SplashScreen() {
       locations={[0, 0.5, 1]}
       style={styles.root}
     >
-      {/* Ambient glow orb behind logo */}
       <Animated.View style={[styles.glowOrb, glowStyle]} />
 
-      {/* Logo */}
       <Animated.View
         entering={FadeIn.delay(200).duration(800)}
         style={[styles.logoWrap, { marginTop: insets.top + 60 }]}
@@ -106,20 +111,16 @@ export default function SplashScreen() {
         <Text style={styles.logoTagline}>ROLL LIKE ROYALTY</Text>
       </Animated.View>
 
-      {/* Spacer */}
       <View style={{ flex: 1 }} />
 
-      {/* Bottom loading area */}
       <Animated.View
         entering={FadeIn.delay(500).duration(600)}
         style={[styles.bottomWrap, { paddingBottom: insets.bottom + 40 }]}
       >
-        {/* Tip text */}
-        <Animated.Text key={tipIdx} entering={FadeIn.duration(300)} style={styles.tipText}>
-          {TIPS[tipIdx]}
+        <Animated.Text key={tip} entering={FadeIn.duration(180)} style={styles.tipText}>
+          {tip}
         </Animated.Text>
 
-        {/* Bar track */}
         <View style={styles.barTrack}>
           <Animated.View style={[styles.barFill, barStyle]}>
             <LinearGradient
@@ -128,12 +129,11 @@ export default function SplashScreen() {
               end={{ x: 1, y: 0 }}
               style={StyleSheet.absoluteFill}
             />
-            {/* Leading shine dot */}
             <View style={styles.barShine} />
           </Animated.View>
         </View>
 
-        <Text style={styles.edition}>2026 Edition · Elite Season</Text>
+        <Text style={styles.edition}>2026 Edition - Elite Season</Text>
       </Animated.View>
     </LinearGradient>
   );
@@ -144,7 +144,6 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
   },
-
   glowOrb: {
     position: 'absolute',
     top: '20%',
@@ -155,7 +154,6 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(212,175,55,0.15)',
     transform: [{ scaleX: 1.6 }],
   },
-
   logoWrap: {
     alignItems: 'center',
     gap: 2,
@@ -196,7 +194,6 @@ const styles = StyleSheet.create({
     letterSpacing: 5,
     marginTop: 14,
   },
-
   bottomWrap: {
     width: '100%',
     alignItems: 'center',

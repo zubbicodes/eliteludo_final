@@ -1,12 +1,16 @@
 // Token rendered as a Reanimated.View so it remains visible and tappable while
 // movement stays on the UI thread.
 
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { Pressable, StyleSheet } from 'react-native';
 import Animated, {
+  cancelAnimation,
   Easing,
+  runOnJS,
   useAnimatedStyle,
+  useDerivedValue,
   useSharedValue,
+  withDelay,
   withTiming,
 } from 'react-native-reanimated';
 
@@ -45,62 +49,74 @@ export function Token({
 }: Props) {
   const tx = useSharedValue(cx - size / 2);
   const ty = useSharedValue(cy - size / 2);
-  const bounce = useSharedValue(0);
+  const pathProgress = useSharedValue(0);
   const glow = useSharedValue(highlighted ? 1 : 0);
   const hopKey = hopPath?.map((p) => `${p.cx.toFixed(1)},${p.cy.toFixed(1)}`).join('|') ?? '';
+  const pathPoints = useMemo(
+    () =>
+      hopPath?.map((point) => ({
+        x: point.cx - size / 2,
+        y: point.cy - size / 2,
+      })) ?? [],
+    [hopPath, size],
+  );
+
+  const animatedX = useDerivedValue(() => {
+    if (pathPoints.length < 2) return tx.value;
+    const maxIndex = pathPoints.length - 1;
+    const current = Math.min(Math.max(pathProgress.value, 0), maxIndex);
+    const index = Math.min(Math.floor(current), maxIndex - 1);
+    const t = current - index;
+    return pathPoints[index].x + (pathPoints[index + 1].x - pathPoints[index].x) * t;
+  });
+
+  const animatedY = useDerivedValue(() => {
+    if (pathPoints.length < 2) return ty.value;
+    const maxIndex = pathPoints.length - 1;
+    const current = Math.min(Math.max(pathProgress.value, 0), maxIndex);
+    const index = Math.min(Math.floor(current), maxIndex - 1);
+    const t = current - index;
+    const arc = Math.min(10, size * 0.35);
+    const hop = -4 * arc * t * (1 - t);
+    return pathPoints[index].y + (pathPoints[index + 1].y - pathPoints[index].y) * t + hop;
+  });
 
   useEffect(() => {
-    const timers: ReturnType<typeof setTimeout>[] = [];
-    const later = (fn: () => void, ms: number) => {
-      const timer = setTimeout(fn, ms);
-      timers.push(timer);
-    };
     const targetX = cx - size / 2;
     const targetY = cy - size / 2;
+    cancelAnimation(pathProgress);
+    cancelAnimation(tx);
+    cancelAnimation(ty);
 
-    if (hopPath && hopPath.length > 1) {
-      const stops = hopPath.slice(1);
-      const arc = Math.min(10, size * 0.35);
-      const half = hopMs / 2;
-
-      stops.forEach((stop, index) => {
-        const startAt = delayMs + index * hopMs;
-        later(() => {
-          tx.value = withTiming(stop.cx - size / 2, { duration: hopMs, easing: Easing.linear });
-          ty.value = withTiming(stop.cy - size / 2, { duration: hopMs, easing: Easing.linear });
-          bounce.value = withTiming(-arc, { duration: half, easing: Easing.out(Easing.quad) });
-        }, startAt);
-        later(() => {
-          bounce.value = withTiming(0, { duration: half, easing: Easing.in(Easing.quad) });
-        }, startAt + half);
-      });
-
-      if (onHopComplete) {
-        later(onHopComplete, delayMs + stops.length * hopMs);
-      }
-
-      return () => {
-        timers.forEach(clearTimeout);
-      };
+    if (pathPoints.length > 1) {
+      tx.value = pathPoints[0].x;
+      ty.value = pathPoints[0].y;
+      pathProgress.value = 0;
+      pathProgress.value = withDelay(
+        delayMs,
+        withTiming(pathPoints.length - 1, {
+          duration: Math.max(1, pathPoints.length - 1) * hopMs,
+          easing: Easing.linear,
+        }, (finished) => {
+          if (finished && onHopComplete) {
+            runOnJS(onHopComplete)();
+          }
+        }),
+      );
+      return;
     }
 
-    bounce.value = 0;
-    later(() => {
-      tx.value = withTiming(targetX, { duration: 260 });
-      ty.value = withTiming(targetY, { duration: 260 });
-    }, delayMs);
-
-    return () => {
-      timers.forEach(clearTimeout);
-    };
-  }, [hopKey, hopPath, cx, cy, size, hopMs, delayMs, tx, ty, bounce, onHopComplete]);
+    pathProgress.value = 0;
+    tx.value = withDelay(delayMs, withTiming(targetX, { duration: 260 }));
+    ty.value = withDelay(delayMs, withTiming(targetY, { duration: 260 }));
+  }, [hopKey, cx, cy, size, hopMs, delayMs, tx, ty, pathProgress, pathPoints, onHopComplete]);
 
   useEffect(() => {
     glow.value = withTiming(highlighted ? 1 : 0, { duration: 180 });
   }, [highlighted, glow]);
 
   const containerStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: tx.value }, { translateY: ty.value + bounce.value }],
+    transform: [{ translateX: animatedX.value }, { translateY: animatedY.value }],
   }));
 
   const ringStyle = useAnimatedStyle(() => ({

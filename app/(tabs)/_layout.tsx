@@ -17,10 +17,8 @@ import { sound } from '@/src/utils/sound';
 
 const TAB_ITEMS = [
   { key: 'shop', label: 'Shop', icon: 'bag-handle' as const, route: '/shop' as const },
-  { key: 'friends', label: 'Friends', icon: 'people' as const, route: '/friends' as const },
   { key: 'home', label: 'Home', icon: 'home' as const, route: '/home' as const },
-  { key: 'clubs', label: 'Clubs', icon: 'shield-checkmark' as const, route: '/clubs' as const },
-  { key: 'chest', label: 'Chest', icon: 'gift' as const, route: '/chest' as const },
+  { key: 'profile', label: 'Profile', icon: 'person-circle' as const, route: '/profile' as const },
 ] as const;
 
 function GlassTabItem({
@@ -83,7 +81,8 @@ function EliteTabBar({ state }: BottomTabBarProps) {
   const viewport = useWindowDimensions();
   const currentRoute = state.routes[state.index]?.name;
   const matchedIndex = TAB_ITEMS.findIndex((item) => item.key === currentRoute);
-  const activeIndex = matchedIndex >= 0 ? matchedIndex : 2;
+  const homeIndex = TAB_ITEMS.findIndex((item) => item.key === 'home');
+  const activeIndex = matchedIndex >= 0 ? matchedIndex : homeIndex;
   const width = Math.min(viewport.width - 20, 520);
   const height = 76;
 
@@ -138,9 +137,9 @@ export default function TabsLayout() {
       <Tabs.Screen name="home" options={{ href: '/home' }} />
       <Tabs.Screen name="shop" options={{ href: '/shop' }} />
       <Tabs.Screen name="profile" options={{ href: '/profile' }} />
-      <Tabs.Screen name="friends" options={{ href: '/friends' }} />
-      <Tabs.Screen name="clubs" options={{ href: '/clubs' }} />
-      <Tabs.Screen name="chest" options={{ href: '/chest' }} />
+      <Tabs.Screen name="friends" options={{ href: null }} />
+      <Tabs.Screen name="clubs" options={{ href: null }} />
+      <Tabs.Screen name="chest" options={{ href: null }} />
     </Tabs>
   );
 }

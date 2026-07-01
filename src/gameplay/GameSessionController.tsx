@@ -78,6 +78,8 @@ type Props = {
   citySlug?: string;
 };
 
+const EMPTY_TOKEN_IDS = new Set<TokenId>();
+
 export function GameSessionController({ matchId, mode, entryFee, citySlug }: Props) {
   const { width, height } = useWindowDimensions();
   const gameMode = mode === '3p' ? '3p' : mode === '4p' ? '4p' : '2p';
@@ -197,6 +199,10 @@ export function GameSessionController({ matchId, mode, entryFee, citySlug }: Pro
   );
   const optimisticMove = !isLocalBotGame && state.status === 'animating' ? state.lastMove : null;
   const movableTokenIds = useMemo(() => new Set(validMoves.map((move) => move.tokenId)), [validMoves]);
+  const visibleMovableTokenIds = useMemo(
+    () => (isMyTurn && state.status === 'awaiting_move' ? movableTokenIds : EMPTY_TOKEN_IDS),
+    [isMyTurn, movableTokenIds, state.status],
+  );
 
   const pickerValues = pickerForToken
     ? Array.from(
@@ -658,14 +664,24 @@ export function GameSessionController({ matchId, mode, entryFee, citySlug }: Pro
   const cornerPlayers = (['topLeft', 'topRight', 'bottomRight'] as const)
     .map((corner) => ({ corner, player: byCorner[corner] }))
     .filter((seat): seat is { corner: 'topLeft' | 'topRight' | 'bottomRight'; player: Player } => !!seat.player && seat.player.color !== localPlayer?.color);
-  const activeDiceProps = {
+  const activeDiceProps = useMemo(() => ({
     dicePool: state.dicePool,
     displayRoll: currentPlayer ? state.lastRollByColor[currentPlayer.color] ?? null : null,
     isRolling: state.status === 'rolling',
     canRoll: isMyTurn && state.status === 'awaiting_roll' && !state.winnerColor,
     onRoll: onHumanRoll,
     timerProgress: shouldRunRollTimer ? rollTimerProgress : null,
-  };
+  }), [
+    currentPlayer,
+    isMyTurn,
+    onHumanRoll,
+    rollTimerProgress,
+    shouldRunRollTimer,
+    state.dicePool,
+    state.lastRollByColor,
+    state.status,
+    state.winnerColor,
+  ]);
   const cityTableSource = citySourceForSlug(matchCitySlug ?? citySlug) ?? Images.bgHome;
 
   if (!currentPlayer) return null;
@@ -686,7 +702,7 @@ export function GameSessionController({ matchId, mode, entryFee, citySlug }: Pro
             perspectiveColor={perspectiveColor}
             tokens={allTokens}
             tokenCenters={tokenCenters}
-            movableTokenIds={isMyTurn && state.status === 'awaiting_move' ? movableTokenIds : new Set<TokenId>()}
+            movableTokenIds={visibleMovableTokenIds}
             moveAnimation={moveAnimation}
             pickerForToken={pickerForToken}
             pickerValues={pickerValues}

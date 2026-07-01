@@ -39,6 +39,7 @@ import {
     RoyalSettingsIcon,
 } from "@/src/skia/HomeArtwork";
 import { OrnateTokenCanvas } from "@/src/skia/OrnateToken";
+import { preloadDeferredHomeAssets } from "@/src/startup/preload";
 import { useProfileStore } from "@/src/stores/profile";
 import { useWalletStore } from "@/src/stores/wallet";
 import { colors } from "@/src/theme/colors";
@@ -309,6 +310,10 @@ export default function HomeScreen() {
     daysUntil(WORLD_CUP_END),
   );
   const scrollX = useSharedValue(0);
+
+  useEffect(() => {
+    void preloadDeferredHomeAssets();
+  }, []);
 
   useEffect(() => {
     hydrateWallet();
