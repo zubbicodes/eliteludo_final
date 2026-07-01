@@ -530,19 +530,6 @@ function lighten(color: Color): string {
   }
 }
 
-function darken(color: Color): string {
-  switch (color) {
-    case 'red':
-      return '#C60025';
-    case 'green':
-      return '#35A722';
-    case 'yellow':
-      return '#E1B800';
-    case 'blue':
-      return '#342DFF';
-  }
-}
-
 /** Returns an rgba() string with the supplied alpha for a hex color. */
 function withAlpha(hex: string, alpha: number): string {
   const h = hex.replace('#', '');

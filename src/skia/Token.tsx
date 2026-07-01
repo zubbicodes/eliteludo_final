@@ -1,13 +1,5 @@
-// Token rendered as a Reanimated.View so we can tap it and animate position
-// independently of the Skia board canvas.
-//
-// Two animation modes:
-//  - Default (no `hopPath`): smooth withTiming slide from previous (cx, cy) to
-//    the new one. Used for captured tokens being sent home, or any time we
-//    just want a clean slide.
-//  - `hopPath` mode: a sequence of cells the token visits one cell at a time,
-//    with a small vertical arc per hop. Used for the moving token of the
-//    current move so each die point reads as one discrete hop.
+// Token rendered as a Reanimated.View so it remains visible and tappable while
+// movement stays on the UI thread.
 
 import { useEffect } from 'react';
 import { Pressable, StyleSheet } from 'react-native';
@@ -15,32 +7,27 @@ import Animated, {
   Easing,
   useAnimatedStyle,
   useSharedValue,
-  withDelay,
-  withSequence,
   withTiming,
 } from 'react-native-reanimated';
 
 import type { Color } from '@/src/game/types';
-import { colors } from '@/src/theme/colors';
 import { OrnateTokenCanvas } from '@/src/skia/OrnateToken';
+import { colors } from '@/src/theme/colors';
 
 type HopStop = { cx: number; cy: number };
 
 type Props = {
   color: Color;
-  /** Center pixel coords (top-left origin). When `hopPath` is set, this is the final cell. */
   cx: number;
   cy: number;
   size: number;
   selectable: boolean;
   highlighted: boolean;
-  /** When set, animates through these cells in order (first entry should be the start cell). */
   hopPath?: HopStop[];
-  /** Per-hop duration in ms when `hopPath` is set. Default 130. */
   hopMs?: number;
-  /** Delay before the move animation starts (used to sequence captures after the attacker arrives). */
   delayMs?: number;
   onPress?: () => void;
+  onHopComplete?: () => void;
 };
 
 export function Token({
@@ -54,16 +41,20 @@ export function Token({
   hopMs = 130,
   delayMs = 0,
   onPress,
+  onHopComplete,
 }: Props) {
   const tx = useSharedValue(cx - size / 2);
   const ty = useSharedValue(cy - size / 2);
   const bounce = useSharedValue(0);
   const glow = useSharedValue(highlighted ? 1 : 0);
-
-  // Encode hopPath as a stable string so the effect only re-runs when the path actually changes.
   const hopKey = hopPath?.map((p) => `${p.cx.toFixed(1)},${p.cy.toFixed(1)}`).join('|') ?? '';
 
   useEffect(() => {
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const later = (fn: () => void, ms: number) => {
+      const timer = setTimeout(fn, ms);
+      timers.push(timer);
+    };
     const targetX = cx - size / 2;
     const targetY = cy - size / 2;
 
@@ -71,30 +62,41 @@ export function Token({
       const stops = hopPath.slice(1);
       const arc = Math.min(10, size * 0.35);
       const half = hopMs / 2;
-      const xSeq = stops.map((p) =>
-        withTiming(p.cx - size / 2, { duration: hopMs, easing: Easing.linear }),
-      );
-      const ySeq = stops.map((p) =>
-        withTiming(p.cy - size / 2, { duration: hopMs, easing: Easing.linear }),
-      );
-      const bSeq = stops.flatMap(() => [
-        withTiming(-arc, { duration: half, easing: Easing.out(Easing.quad) }),
-        withTiming(0, { duration: half, easing: Easing.in(Easing.quad) }),
-      ]);
-      tx.value = withDelay(delayMs, withSequence(...xSeq));
-      ty.value = withDelay(delayMs, withSequence(...ySeq));
-      bounce.value = withDelay(delayMs, withSequence(...bSeq));
-      return;
+
+      stops.forEach((stop, index) => {
+        const startAt = delayMs + index * hopMs;
+        later(() => {
+          tx.value = withTiming(stop.cx - size / 2, { duration: hopMs, easing: Easing.linear });
+          ty.value = withTiming(stop.cy - size / 2, { duration: hopMs, easing: Easing.linear });
+          bounce.value = withTiming(-arc, { duration: half, easing: Easing.out(Easing.quad) });
+        }, startAt);
+        later(() => {
+          bounce.value = withTiming(0, { duration: half, easing: Easing.in(Easing.quad) });
+        }, startAt + half);
+      });
+
+      if (onHopComplete) {
+        later(onHopComplete, delayMs + stops.length * hopMs);
+      }
+
+      return () => {
+        timers.forEach(clearTimeout);
+      };
     }
 
-    // No path → smooth slide.
     bounce.value = 0;
-    tx.value = withDelay(delayMs, withTiming(targetX, { duration: 320 }));
-    ty.value = withDelay(delayMs, withTiming(targetY, { duration: 320 }));
-  }, [hopKey, hopPath, cx, cy, size, hopMs, delayMs, tx, ty, bounce]);
+    later(() => {
+      tx.value = withTiming(targetX, { duration: 260 });
+      ty.value = withTiming(targetY, { duration: 260 });
+    }, delayMs);
+
+    return () => {
+      timers.forEach(clearTimeout);
+    };
+  }, [hopKey, hopPath, cx, cy, size, hopMs, delayMs, tx, ty, bounce, onHopComplete]);
 
   useEffect(() => {
-    glow.value = withTiming(highlighted ? 1 : 0, { duration: 200 });
+    glow.value = withTiming(highlighted ? 1 : 0, { duration: 180 });
   }, [highlighted, glow]);
 
   const containerStyle = useAnimatedStyle(() => ({

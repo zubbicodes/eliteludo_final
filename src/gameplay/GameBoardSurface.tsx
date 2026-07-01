@@ -1,15 +1,14 @@
-import { Atlas, Canvas } from '@shopify/react-native-skia';
 import { memo, useMemo } from 'react';
-import { ImageBackground, Pressable, StyleSheet, View, type ImageSourcePropType } from 'react-native';
+import { ImageBackground, StyleSheet, View, type ImageSourcePropType } from 'react-native';
 
 import { TokenDicePicker } from '@/src/components/TokenDicePicker';
 import type { Color, Token as GameToken, TokenId } from '@/src/game/types';
 import { BoardCanvas } from '@/src/skia/Board';
 import { Particles, type Burst } from '@/src/skia/Particles';
+import { Token as TokenView } from '@/src/skia/Token';
 
 import { HOP_MS } from './constants';
 import type { MoveAnimation, TokenCenter } from './helpers';
-import { useTokenAnimationController } from './useTokenAnimationController';
 
 type Props = {
   boardSize: number;
@@ -68,13 +67,6 @@ export const GameBoardSurface = memo(function GameBoardSurface({
     [movableTokenIds, orderedTokens, tokenCenters],
   );
 
-  const animation = useTokenAnimationController({
-    tokens: animatedTokens,
-    moveAnimation,
-    hopMs: HOP_MS,
-    onMoveAnimationComplete,
-  });
-
   return (
     <View style={[styles.boardWrap, { width: boardSize, height: boardSize }]}>
       <View style={[styles.boardSquare, { width: boardSize, height: boardSize }]}>
@@ -89,29 +81,27 @@ export const GameBoardSurface = memo(function GameBoardSurface({
         </ImageBackground>
 
         <View style={[StyleSheet.absoluteFill, styles.tokenLayer]} pointerEvents="box-none">
-          <Canvas style={StyleSheet.absoluteFill} pointerEvents="none">
-            <Atlas image={animation.haloImage} sprites={animation.haloSprites} transforms={animation.haloTransforms} />
-            <Atlas image={animation.tokenImage} sprites={animation.tokenSprites} transforms={animation.tokenTransforms} />
-          </Canvas>
-
-          {animatedTokens
-            .filter((token) => movableTokenIds.has(token.id))
-            .map((token) => (
-              <Pressable
+          {animatedTokens.map((token) => {
+            const isMoving = moveAnimation?.movingTokenId === token.id;
+            const isCaptured = moveAnimation?.capturedTokenIds.includes(token.id) ?? false;
+            const selectable = movableTokenIds.has(token.id);
+            return (
+              <TokenView
                 key={token.id}
+                color={token.color}
+                cx={token.cx}
+                cy={token.cy}
+                size={token.size}
+                selectable={selectable}
+                highlighted={selectable}
+                hopPath={isMoving ? moveAnimation?.hopPath : undefined}
+                hopMs={HOP_MS}
+                delayMs={isCaptured ? moveAnimation?.captureDelayMs ?? 0 : 0}
                 onPress={() => onTokenTap(token.id)}
-                style={[
-                  styles.hitTarget,
-                  {
-                    left: token.cx - token.size / 2,
-                    top: token.cy - token.size / 2,
-                    width: token.size,
-                    height: token.size,
-                    borderRadius: token.size / 2,
-                  },
-                ]}
+                onHopComplete={isMoving ? onMoveAnimationComplete : undefined}
               />
-            ))}
+            );
+          })}
 
           {pickerForToken && pickerCenter && pickerValues.length > 0 && (
             <TokenDicePicker
@@ -161,9 +151,5 @@ const styles = StyleSheet.create({
   },
   particleLayer: {
     zIndex: 3,
-  },
-  hitTarget: {
-    position: 'absolute',
-    backgroundColor: 'transparent',
   },
 });

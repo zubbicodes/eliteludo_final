@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, type MutableRefObject } from 'react';
+import { useCallback, useEffect, useMemo, useRef, type MutableRefObject } from 'react';
 
 import type { MatchBoardState, MoveOption } from '@/src/game/types';
 import { boardVersion, shouldApplyMatchEvent, type MatchRealtimeEvent } from '@/src/supabase/matchRealtimeEvents';
@@ -129,5 +129,5 @@ export function useRealtimeBoardQueue({
     deferredEventRef.current = null;
   }, [clearTimer]);
 
-  return { enqueueEvent, flush };
+  return useMemo(() => ({ enqueueEvent, flush }), [enqueueEvent, flush]);
 }
