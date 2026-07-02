@@ -4,6 +4,7 @@ const path = require('path');
 const ROOT = path.resolve(__dirname, '..');
 const ASSETS_DIR = path.join(ROOT, 'assets');
 const SOURCE_DIRS = [path.join(ROOT, 'app'), path.join(ROOT, 'src')];
+const CONFIG_FILES = [path.join(ROOT, 'app.json')];
 const WARN_KB = 300;
 const ERROR_KB = 1024;
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp']);
@@ -19,12 +20,19 @@ function walk(dir) {
 }
 
 function sourceText() {
-  return SOURCE_DIRS
+  const sourceCode = SOURCE_DIRS
     .filter((dir) => fs.existsSync(dir))
     .flatMap((dir) => walk(dir))
     .filter((file) => ['.ts', '.tsx', '.js', '.jsx'].includes(path.extname(file).toLowerCase()))
     .map((file) => fs.readFileSync(file, 'utf8'))
     .join('\n');
+
+  const configText = CONFIG_FILES
+    .filter((file) => fs.existsSync(file))
+    .map((file) => fs.readFileSync(file, 'utf8'))
+    .join('\n');
+
+  return `${sourceCode}\n${configText}`;
 }
 
 function pngSize(buffer) {

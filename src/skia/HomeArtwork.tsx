@@ -114,7 +114,7 @@ export function RoyalCrestCanvas({
     Math.min(30, width * 0.1),
   );
   const tagFont = useFont(
-    require("../../assets/fonts/CinzelDecorative-Regular.ttf"),
+    require("../../assets/fonts/Montserrat-SemiBold.ttf"),
     Math.min(8, width * 0.029),
   );
   const title = "ELITE LUDO";
@@ -431,7 +431,7 @@ function HeroButtonFrame({
     ? Math.min(height * 0.105, (width - 24) / (label.length * 0.68))
     : Math.min(22, height * 0.135);
   const labelFont = useFont(
-    require("../../assets/fonts/CinzelDecorative-Regular.ttf"),
+    require("../../assets/fonts/Montserrat-ExtraBold.ttf"),
     labelFontSize,
   );
   const labelWidth = labelFont?.measureText(label).width ?? width * 0.48;
@@ -589,7 +589,7 @@ function LargeTable({
 }) {
   const numberSize = Math.min(width * 0.63, height * 0.69);
   const numberFont = useFont(
-    require("../../assets/fonts/CinzelDecorative-Regular.ttf"),
+    require("../../assets/fonts/Montserrat-ExtraBold.ttf"),
     numberSize,
   );
   const boardX = width * 0.1;
@@ -1062,7 +1062,7 @@ export function RoyalAvatarIcon({
     { translateY: crownLift.value },
   ]);
   const initialFont = useFont(
-    require("../../assets/fonts/CinzelDecorative-Regular.ttf"),
+    require("../../assets/fonts/Montserrat-ExtraBold.ttf"),
     size * 0.18,
   );
   const text = initial.slice(0, 1);
@@ -1264,11 +1264,11 @@ export function RoyalCornerActionCanvas({
   const glow = useDerivedValue(() => 0.16 + pulse.value * 0.12);
   const iconTransform = useDerivedValue(() => [{ translateY: bob.value }]);
   const labelFont = useFont(
-    require("../../assets/fonts/CinzelDecorative-Regular.ttf"),
+    require("../../assets/fonts/Montserrat-ExtraBold.ttf"),
     label.length > 7 ? 8.8 : 10.8,
   );
   const badgeFont = useFont(
-    require("../../assets/fonts/CinzelDecorative-Regular.ttf"),
+    require("../../assets/fonts/Montserrat-SemiBold.ttf"),
     9.6,
   );
   const labelWidth = labelFont?.measureText(label).width ?? width * 0.55;

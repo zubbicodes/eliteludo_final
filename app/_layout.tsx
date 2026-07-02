@@ -61,8 +61,10 @@ if (AppTextInput.render && !AppTextInput.__eliteFontPatched) {
 export default function RootLayout() {
   const initialize = useAuthStore((s) => s.initialize);
   const [fontsLoaded] = useFonts({
-    'Cinzel-Regular': require('../assets/fonts/Cinzel-Regular.ttf'),
     'CinzelDecorative-Regular': require('../assets/fonts/CinzelDecorative-Regular.ttf'),
+    'Montserrat-Medium': require('../assets/fonts/Montserrat-Medium.ttf'),
+    'Montserrat-SemiBold': require('../assets/fonts/Montserrat-SemiBold.ttf'),
+    'Montserrat-ExtraBold': require('../assets/fonts/Montserrat-ExtraBold.ttf'),
   });
 
   useEffect(() => {

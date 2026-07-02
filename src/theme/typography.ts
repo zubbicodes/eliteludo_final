@@ -1,16 +1,18 @@
 export const fontFamilies = {
-  heading: 'CinzelDecorative-Regular',
-  body: 'Cinzel-Regular',
+  brand: 'CinzelDecorative-Regular',
+  heading: 'Montserrat-ExtraBold',
+  body: 'Montserrat-Medium',
+  label: 'Montserrat-SemiBold',
 } as const;
 
 export const typography = {
-  display: { fontFamily: fontFamilies.heading, fontSize: 48, fontWeight: '400' as const, letterSpacing: 4 },
-  h1: { fontFamily: fontFamilies.heading, fontSize: 32, fontWeight: '400' as const, letterSpacing: 1 },
-  h2: { fontFamily: fontFamilies.heading, fontSize: 24, fontWeight: '400' as const },
-  h3: { fontFamily: fontFamilies.heading, fontSize: 18, fontWeight: '400' as const },
+  display: { fontFamily: fontFamilies.brand, fontSize: 48, fontWeight: '400' as const, letterSpacing: 4 },
+  h1: { fontFamily: fontFamilies.heading, fontSize: 32, fontWeight: '800' as const, letterSpacing: 0 },
+  h2: { fontFamily: fontFamilies.heading, fontSize: 24, fontWeight: '800' as const },
+  h3: { fontFamily: fontFamilies.label, fontSize: 18, fontWeight: '600' as const },
   body: { fontFamily: fontFamilies.body, fontSize: 16, fontWeight: '400' as const },
   caption: { fontFamily: fontFamilies.body, fontSize: 13, fontWeight: '400' as const },
-  tagline: { fontFamily: fontFamilies.heading, fontSize: 14, fontWeight: '400' as const, letterSpacing: 6 },
+  tagline: { fontFamily: fontFamilies.label, fontSize: 14, fontWeight: '600' as const, letterSpacing: 0 },
 };
 
 export const spacing = {

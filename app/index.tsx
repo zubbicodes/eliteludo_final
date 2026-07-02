@@ -159,7 +159,7 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   logoElite: {
-    fontFamily: fontFamilies.heading,
+    fontFamily: fontFamilies.brand,
     fontSize: 58,
     fontWeight: '400',
     color: colors.gold,
@@ -177,7 +177,7 @@ const styles = StyleSheet.create({
     marginVertical: 6,
   },
   logoLudo: {
-    fontFamily: fontFamilies.heading,
+    fontFamily: fontFamilies.brand,
     fontSize: 34,
     fontWeight: '400',
     color: colors.goldLight,
